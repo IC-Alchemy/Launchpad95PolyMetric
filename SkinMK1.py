@@ -37,6 +37,10 @@ class Colors:
             On = Rgb.RED
             Off = Rgb.RED_THIRD
 
+        class PolymetricSequencer:
+            On = Rgb.GREEN
+            Off = Rgb.GREEN_THIRD
+
         class User:
             On = Rgb.GREEN
             Off = Rgb.GREEN_THIRD
@@ -597,6 +601,39 @@ class Colors:
             Selected = Rgb.RED
             Note = Rgb.RED_HALF
             Tripplet = Rgb.RED_THIRD
+
+    class PolymetricSequencer:
+        Blank = Rgb.BLACK
+        StepOff = Rgb.BLACK
+        StepOn1 = Rgb.GREEN
+        StepOn2 = Rgb.AMBER
+        StepOn3 = Rgb.RED
+        StepOn4 = Rgb.GREEN_THIRD
+        Playhead1 = Rgb.GREEN_BLINK
+        Playhead2 = Rgb.AMBER_BLINK
+        Playhead3 = Rgb.RED_BLINK
+        Playhead4 = Rgb.GREEN_BLINK_THIRD
+        StepSelected = Rgb.RED_BLINK
+        NoteOn = Rgb.RED
+        NoteDim = Rgb.RED_THIRD
+        NoteOff = Rgb.BLACK
+        FaderOn = Rgb.GREEN
+        FaderDim = Rgb.GREEN_THIRD
+        FaderOff = Rgb.BLACK
+        LengthOn = Rgb.AMBER_THIRD
+        LengthSelected = Rgb.AMBER
+        LengthOff = Rgb.BLACK
+        PageMarker = Rgb.GREEN_THIRD
+        SideOn = Rgb.RED
+        SideOff = Rgb.RED_THIRD
+        SideLength = Rgb.AMBER
+        TopVoiceA = Rgb.GREEN
+        TopVoiceB = Rgb.AMBER
+        TopPairA = Rgb.GREEN_THIRD
+        TopPairB = Rgb.RED
+        TopPageA = Rgb.AMBER_THIRD
+        TopPageB = Rgb.AMBER
+        TopRandom = Rgb.RED
 
 
 def make_skin():

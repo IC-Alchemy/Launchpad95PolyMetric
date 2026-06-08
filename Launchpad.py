@@ -30,6 +30,7 @@ LP_MINI_MK3_FAMILY_CODE = (19, 1)
 LP_MINI_MK3_ID = 13
 LP_X_FAMILY_CODE = (3, 1)
 LP_X_ID = 12
+LP_PRO_FAMILY_CODE = (81, 0)
 
 #LAYOUT_COMMAND = 0
 #FADER_COMMAND = 1
@@ -68,6 +69,7 @@ class Launchpad(ControlSurface):
 		self._live_bugfix_version = live.get_bugfix_version()
 		self._selector = None #needed because update hardware is called.
 		self._lpx = False
+		self._lp_pro = False
 		self._mk2_rgb = False
 		self._mk3_rgb = False
 		with self.component_guard():
@@ -96,7 +98,7 @@ class Launchpad(ControlSurface):
 			self._skin = make_skin()
 			self._side_notes = (89, 79, 69, 59, 49, 39, 29, 19)
 			self._drum_notes = (20, 30, 90, 91, 92, 93, 94, 95, 96, 97, 98, 99, 100, 101, 102, 103, 112, 113, 114, 115, 116, 117, 118, 119, 120, 121, 122, 123, 124, 125, 126)
-		elif self._mk2_rgb:
+		elif self._mk2_rgb or self._lp_pro:
 			from .SkinMK2 import make_skin
 			self._skin = make_skin()
 			self._side_notes = (89, 79, 69, 59, 49, 39, 29, 19)
@@ -121,7 +123,7 @@ class Launchpad(ControlSurface):
 			for row in range(8):
 				button_row = []
 				for column in range(8):
-					if self._mk2_rgb or self._mk3_rgb or self._lpx:
+					if self._mk2_rgb or self._mk3_rgb or self._lpx or self._lp_pro:
 						# for mk2 buttons are assigned "top to bottom"
 						midi_note = (81 - (10 * row)) + column
 					else:
@@ -179,6 +181,8 @@ class Launchpad(ControlSurface):
 				self.log_message("LaunchPad95 (LPX) Loaded !")
 			elif self._mk3_rgb:
 				self.log_message("LaunchPad95 (mk3) Loaded !")
+			elif self._lp_pro:
+				self.log_message("LaunchPad95 (pro) Loaded !")
 			elif self._mk2_rgb:
 				self.log_message("LaunchPad95 (mk2) Loaded !")
 			else:
@@ -203,7 +207,7 @@ class Launchpad(ControlSurface):
 			# launchpad mk2 needs disconnect string sent
 			self._send_midi(STD_MSG_HEADER + (LP_MINI_MK3_ID, 14, 0, SYSEX_END))
 			self._send_midi(STD_MSG_HEADER + (LP_MINI_MK3_ID, FIRMWARE_MODE_COMMAND, STANDALONE_MODE, SYSEX_END))
-		elif self._mk2_rgb:
+		elif self._mk2_rgb or self._lp_pro:
 			# launchpad mk2 needs disconnect string sent
 			self._send_midi((240, 0, 32, 41, 2, 24, 64, 247))
 		if self._config_button != None:
@@ -270,6 +274,11 @@ class Launchpad(ControlSurface):
 				self._send_midi(STD_MSG_HEADER + (LP_X_ID, 10, 0, 1, SYSEX_END))
 				#disable sleep mode
 				self._send_midi(STD_MSG_HEADER + (LP_X_ID, 9, 1, SYSEX_END))
+				self._suppress_send_midi = False
+				self.set_enabled(True)
+				self.init()
+			elif len(midi_bytes) >= 12 and midi_bytes[8:10] == LP_PRO_FAMILY_CODE:
+				self._lp_pro = True
 				self._suppress_send_midi = False
 				self.set_enabled(True)
 				self.init()

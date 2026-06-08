@@ -10,6 +10,7 @@ from .InstrumentControllerComponent import InstrumentControllerComponent
 from .SubSelectorComponent import SubSelectorComponent  # noqa
 from .StepSequencerComponent import StepSequencerComponent
 from .StepSequencerComponent2 import StepSequencerComponent2
+from .PolymetricSequencerComponent import PolymetricSequencerComponent
 from .NoteRepeatComponent import NoteRepeatComponent
 from _Framework.SceneComponent import SceneComponent
 from .SpecialProSessionComponent import SpecialProSessionComponent
@@ -99,6 +100,10 @@ class MainSelectorComponent(ModeSelectorComponent):
 		#User2 stepSequencer (Retro style)
 		self._stepseq2 = StepSequencerComponent2(self._matrix, self._side_buttons, self._nav_buttons, self._control_surface)
 		self._stepseq2.set_osd(self._osd)
+
+		#User2 stepSequencer (Polymetric realtime)
+		self._polyseq = PolymetricSequencerComponent(self._matrix, self._side_buttons, self._nav_buttons, self._control_surface)
+		self._polyseq.set_osd(self._osd)
 		
 		#User1 Instrument controller (Scale)
 		self._instrument_controller = InstrumentControllerComponent(self._matrix, self._side_buttons, self._nav_buttons, self._control_surface, self._note_repeat)
@@ -213,6 +218,8 @@ class MainSelectorComponent(ModeSelectorComponent):
 			user2Mode = "StepSequencer"
 		if user2Mode=="melodic stepseq":
 			user2Mode = "StepSequencer2"
+		if user2Mode=="polymetric stepseq":
+			user2Mode = "PolymetricSequencer"
 		return user2Mode
 		
 	def channel_for_current_mode(self):
@@ -240,7 +247,7 @@ class MainSelectorComponent(ModeSelectorComponent):
 			elif self._sub_mode_list[self._main_mode_index] == 1:
 				new_channel = 2  # melodic step seq
 			elif self._sub_mode_list[self._main_mode_index] == 2:
-				new_channel = 5  # plain user mode 2
+				new_channel = 5  # polymetric step seq
 
 		elif self._main_mode_index == 3:  # mixer modes
 			# mixer uses base channel 7 and the 4 next ones.
@@ -271,6 +278,7 @@ class MainSelectorComponent(ModeSelectorComponent):
 				self._setup_device_controller(not as_active)
 				self._setup_step_sequencer(not as_active)
 				self._setup_step_sequencer2(not as_active)
+				self._setup_polymetric_step_sequencer(not as_active)
 				self._setup_instrument_controller(not as_active)
 				self._setup_session(as_active, as_enabled)
 				self._update_control_channels()
@@ -287,6 +295,7 @@ class MainSelectorComponent(ModeSelectorComponent):
 				self._setup_device_controller(not as_active)
 				self._setup_step_sequencer(not as_active)
 				self._setup_step_sequencer2(not as_active)
+				self._setup_polymetric_step_sequencer(not as_active)
 				self._setup_instrument_controller(not as_active)
 				self._setup_session(not as_active, as_enabled)
 				self._setup_mixer(as_active)
@@ -306,6 +315,7 @@ class MainSelectorComponent(ModeSelectorComponent):
 			self._setup_session(not as_active, not as_enabled)
 			self._setup_step_sequencer(not as_active)
 			self._setup_step_sequencer2(not as_active)
+			self._setup_polymetric_step_sequencer(not as_active)
 			self._setup_mixer(not as_active)
 			self._setup_device_controller(not as_active)
 			self._update_control_channels()
@@ -318,14 +328,27 @@ class MainSelectorComponent(ModeSelectorComponent):
 			self._setup_device_controller(not as_active)
 			self._setup_mixer(not as_active)
 			self._setup_step_sequencer(not as_active)
+			self._setup_polymetric_step_sequencer(not as_active)
 			self._setup_step_sequencer2(as_active)
 			self._update_control_channels()
 			self._mode_index = 7
+		elif mode == "polymetric stepseq":
+			self._control_surface.show_message("POLYMETRIC SEQUENCER MODE")
+			self._setup_session(not as_active, not as_enabled)
+			self._setup_instrument_controller(not as_active)
+			self._setup_device_controller(not as_active)
+			self._setup_mixer(not as_active)
+			self._setup_step_sequencer(not as_active)
+			self._setup_step_sequencer2(not as_active)
+			self._setup_polymetric_step_sequencer(as_active)
+			self._update_control_channels()
+			self._mode_index = 8
 		elif mode == "user 1":
 			self._control_surface.show_message("USER 1 MODE" )
 			self._setup_session(not as_active, not as_enabled)
 			self._setup_step_sequencer(not as_active)
 			self._setup_step_sequencer2(not as_active)
+			self._setup_polymetric_step_sequencer(not as_active)
 			self._setup_mixer(not as_active)
 			self._setup_device_controller(not as_active)
 			self._setup_instrument_controller(not as_active)
@@ -342,6 +365,7 @@ class MainSelectorComponent(ModeSelectorComponent):
 			self._setup_device_controller(not as_active)
 			self._setup_mixer(not as_active)
 			self._setup_step_sequencer2(not as_active)
+			self._setup_polymetric_step_sequencer(not as_active)
 			self._setup_step_sequencer(as_active)
 			self._update_control_channels()
 			self._mode_index = 6
@@ -350,6 +374,7 @@ class MainSelectorComponent(ModeSelectorComponent):
 			self._setup_session(not as_active, not as_enabled)
 			self._setup_step_sequencer(not as_active)
 			self._setup_step_sequencer2(not as_active)
+			self._setup_polymetric_step_sequencer(not as_active)
 			self._setup_mixer(not as_active)
 			self._setup_instrument_controller(not as_active)
 			self._setup_device_controller(as_active)
@@ -363,6 +388,7 @@ class MainSelectorComponent(ModeSelectorComponent):
 			self._setup_mixer(not as_active)
 			self._setup_step_sequencer(not as_active)
 			self._setup_step_sequencer2(not as_active)
+			self._setup_polymetric_step_sequencer(not as_active)
 			self._setup_user_mode(False, False, False, False)
 			self._update_control_channels()
 			self._mode_index = 2
@@ -542,6 +568,17 @@ class MainSelectorComponent(ModeSelectorComponent):
 				self._stepseq2.set_enabled(True)
 			else:
 				self._stepseq2.set_enabled(False)
+
+	def _setup_polymetric_step_sequencer(self, as_active):
+		if(self._polyseq != None):
+			if as_active:
+				self._activate_scene_buttons(True)
+				self._activate_matrix(True)
+				self._activate_navigation_buttons(True)
+				self._config_button.send_value(32)
+				self._polyseq.set_enabled(True)
+			else:
+				self._polyseq.set_enabled(False)
 
 	def _setup_mixer(self, as_active):
 		assert isinstance(as_active, type(False))

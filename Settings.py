@@ -26,6 +26,7 @@ class Settings():
     USER_MODES_2 = [
 		"drum stepseq"
 		, "melodic stepseq"
+		, "polymetric stepseq"
 		# ,"user 2"
     ]
 
