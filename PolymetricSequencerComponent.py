@@ -1,696 +1,529 @@
+import re
 import time
-from random import randrange
 
 from _Framework.ButtonElement import ButtonElement
-from _Framework.ButtonMatrixElement import ButtonMatrixElement
-from _Framework.ControlSurfaceComponent import ControlSurfaceComponent
 
-from .ScaleComponent import KEY_NAMES, MUSICAL_MODES
+from .ScaleComponent import MUSICAL_MODES, KEY_NAMES
+from .StepSequencerComponent import QUANTIZATION_NAMES
+from .StepSequencerComponent2 import StepSequencerComponent2, MelodicNoteEditorComponent
 
 
 try:
-    xrange
+	xrange
 except NameError:
-    xrange = range
+	xrange = range
 
 
-MODE_STEP = "step"
-MODE_NOTE = "note"
-MODE_LENGTH = "length"
+POLY_MODE_GATE = 0
+POLY_MODE_LENGTH = 1
+POLY_MODE_OCTAVE = 2
+POLY_MODE_VELOCITY = 3
+POLY_MODE_PITCH = 4
+POLY_MODE_LANE_LENGTH = 20
 
-PARAMETERS = [
-    "note",
-    "velocity",
-    "octave",
-    "gate_length",
-    "cc1",
-    "cc2",
-    "cc3",
-    "cc4"
-]
+LANE_GATE = "gate"
+LANE_LENGTH = "length"
+LANE_OCTAVE = "octave"
+LANE_VELOCITY = "velocity"
+LANE_PITCH = "pitch"
 
-PARAMETER_LABELS = {
-    "note": "Note",
-    "velocity": "Velocity",
-    "octave": "Octave",
-    "gate_length": "Gate",
-    "cc1": "CC 1",
-    "cc2": "CC 2",
-    "cc3": "CC 3",
-    "cc4": "CC 4"
+LANE_ORDER = [LANE_GATE, LANE_LENGTH, LANE_OCTAVE, LANE_VELOCITY, LANE_PITCH]
+LANE_MODE = {
+	LANE_GATE: POLY_MODE_GATE,
+	LANE_LENGTH: POLY_MODE_LENGTH,
+	LANE_OCTAVE: POLY_MODE_OCTAVE,
+	LANE_VELOCITY: POLY_MODE_VELOCITY,
+	LANE_PITCH: POLY_MODE_PITCH
 }
-
-MAX_STEPS = 16
-STEPS_PER_PAGE = 8
-LONG_PRESS = 0.4
-DEFAULT_NOTE = 60
-DEFAULT_VELOCITY_INDEX = 4
-DEFAULT_OCTAVE_INDEX = 3
-DEFAULT_GATE_LENGTH_INDEX = 3
-DEFAULT_CC_INDEX = 0
-DEFAULT_QUANTIZATION = 0.25
-NOTE_EDITOR_BASE_OCTAVE = 3
-
-VELOCITY_VALUES = [0, 30, 60, 80, 100, 115, 127]
-OCTAVE_VALUES = [-3, -2, -1, 0, 1, 2, 3]
-GATE_LENGTH_VALUES = [0.125, 0.25, 0.375, 0.5, 0.625, 0.75, 1.0]
-CC_VALUES = [0, 21, 42, 63, 84, 106, 127]
-CC_NUMBERS = [1, 2, 3, 4]
-VOICE_CHANNELS = [0, 1, 2, 3]
-
-SCALE_INTERVALS = dict((MUSICAL_MODES[index], MUSICAL_MODES[index + 1]) for index in xrange(0, len(MUSICAL_MODES), 2))
-DEFAULT_SCALE_INTERVALS = [0, 2, 4, 5, 7, 9, 11]
-
-STEP_ON_COLORS = [
-    "PolymetricSequencer.StepOn1",
-    "PolymetricSequencer.StepOn2",
-    "PolymetricSequencer.StepOn3",
-    "PolymetricSequencer.StepOn4"
-]
-
-PLAYHEAD_COLORS = [
-    "PolymetricSequencer.Playhead1",
-    "PolymetricSequencer.Playhead2",
-    "PolymetricSequencer.Playhead3",
-    "PolymetricSequencer.Playhead4"
-]
-
-
-class ParameterTrack(object):
-
-    def __init__(self, default_value):
-        self.default_value = default_value
-        self.values = [default_value for _ in xrange(MAX_STEPS)]
-        self.step_count = MAX_STEPS
-
-    def get_value(self, step_index):
-        return self.values[step_index % self.step_count]
-
-    def set_value(self, step_index, value):
-        self.values[step_index % MAX_STEPS] = value
-
-    def reset(self):
-        for index in xrange(MAX_STEPS):
-            self.values[index] = self.default_value
-        self.step_count = MAX_STEPS
-
-    def randomize(self, minimum, maximum):
-        for index in xrange(MAX_STEPS):
-            self.values[index] = randrange(minimum, maximum + 1)
-
-
-class VoiceState(object):
-
-    def __init__(self):
-        self.tracks = {
-            "note": ParameterTrack(DEFAULT_NOTE),
-            "velocity": ParameterTrack(DEFAULT_VELOCITY_INDEX),
-            "octave": ParameterTrack(DEFAULT_OCTAVE_INDEX),
-            "gate_length": ParameterTrack(DEFAULT_GATE_LENGTH_INDEX),
-            "cc1": ParameterTrack(DEFAULT_CC_INDEX),
-            "cc2": ParameterTrack(DEFAULT_CC_INDEX),
-            "cc3": ParameterTrack(DEFAULT_CC_INDEX),
-            "cc4": ParameterTrack(DEFAULT_CC_INDEX),
-            "gate": ParameterTrack(0)
-        }
-
-
-class PolymetricSequencerComponent(ControlSurfaceComponent):
-
-    def __init__(self, matrix, side_buttons, top_buttons, control_surface):
-        ControlSurfaceComponent.__init__(self)
-        assert isinstance(matrix, ButtonMatrixElement)
-        assert isinstance(side_buttons, tuple)
-        assert isinstance(top_buttons, tuple)
-
-        self._control_surface = control_surface
-        self._matrix = None
-        self._side_buttons = side_buttons
-        self._top_buttons = top_buttons
-        self._osd = None
-
-        self._voices = [VoiceState() for _ in xrange(4)]
-        self._selected_voice_pair = 0
-        self._selected_voice = 0
-        self._selected_step = 0
-        self._selected_param = PARAMETERS[0]
-        self._edit_mode = MODE_STEP
-        self._current_page = 0
-        self._quantization = DEFAULT_QUANTIZATION
-
-        self._playheads = [0 for _ in xrange(4)]
-        self._param_playheads = dict((parameter, [0 for _ in xrange(4)]) for parameter in PARAMETERS + ["gate"])
-        self._active_notes = [None for _ in xrange(4)]
-        self._pending_note_offs = []
-        self._last_global_step = -1
-        self._last_blink = -1
-
-        self._grid_buffer = [[None for _ in xrange(8)] for _ in xrange(8)]
-        self._grid_back_buffer = [[None for _ in xrange(8)] for _ in xrange(8)]
-        self._force_update = True
-
-        self._matrix_press_times = {}
-        self._side_press_times = {}
-        self._top_press_times = {}
-        self._timer_registered = False
-
-        self._register_button_listeners()
-        self.set_matrix(matrix)
-        self.set_enabled(False)
-
-    def disconnect(self):
-        self._unregister_timer()
-        self._stop_all_notes()
-        if self._matrix is not None:
-            try:
-                self._matrix.remove_value_listener(self._matrix_value)
-            except RuntimeError:
-                pass
-
-        for button in self._side_buttons:
-            if button is not None:
-                try:
-                    button.remove_value_listener(self._side_value)
-                except RuntimeError:
-                    pass
-
-        for button in self._top_buttons:
-            if button is not None:
-                try:
-                    button.remove_value_listener(self._top_value)
-                except RuntimeError:
-                    pass
-
-        self._matrix = None
-        self._side_buttons = None
-        self._top_buttons = None
-        self._voices = None
-        self._pending_note_offs = None
-        self._active_notes = None
-
-    def set_osd(self, osd):
-        self._osd = osd
-
-    def set_matrix(self, matrix):
-        assert isinstance(matrix, (ButtonMatrixElement, type(None)))
-        if self._matrix is not None:
-            try:
-                self._matrix.remove_value_listener(self._matrix_value)
-            except RuntimeError:
-                pass
-
-        self._matrix = matrix
-        if self._matrix is not None:
-            self._matrix.add_value_listener(self._matrix_value)
-        self._force_update = True
-
-    def set_enabled(self, enabled):
-        ControlSurfaceComponent.set_enabled(self, enabled)
-        if enabled:
-            self._register_timer()
-            self._force_update = True
-            self.update()
-        else:
-            self._unregister_timer()
-            self._stop_all_notes()
-
-    def update(self):
-        if not self.is_enabled():
-            return
-        self._update_osd()
-        self._update_buttons()
-        self._update_matrix()
-
-    def _register_button_listeners(self):
-        for button in self._side_buttons:
-            assert isinstance(button, ButtonElement)
-            button.add_value_listener(self._side_value, identify_sender=True)
-
-        for button in self._top_buttons:
-            assert isinstance(button, ButtonElement)
-            button.add_value_listener(self._top_value, identify_sender=True)
-
-    def _register_timer(self):
-        if not self._timer_registered and hasattr(self._control_surface, "_register_timer_callback"):
-            self._control_surface._register_timer_callback(self._on_timer)
-            self._timer_registered = True
-
-    def _unregister_timer(self):
-        if self._timer_registered and hasattr(self._control_surface, "_unregister_timer_callback"):
-            try:
-                self._control_surface._unregister_timer_callback(self._on_timer)
-            except RuntimeError:
-                pass
-            self._timer_registered = False
-
-    def _on_timer(self):
-        if not self.is_enabled():
-            return
-
-        song_time = self._song_time()
-        self._flush_note_offs(song_time)
-
-        if self.song().is_playing:
-            global_step = int(song_time / self._quantization)
-            if global_step != self._last_global_step:
-                self._last_global_step = global_step
-                self._process_step(global_step, song_time)
-                self._force_update = True
-        else:
-            if self._last_global_step != -1:
-                self._last_global_step = -1
-                self._stop_all_notes()
-                self._force_update = True
-
-        blink_state = int(time.time() * 2)
-        if blink_state != self._last_blink:
-            self._last_blink = blink_state
-            self._force_update = True
-
-        if self._force_update:
-            self.update()
-
-    def _song_time(self):
-        try:
-            return self.song().current_song_time
-        except RuntimeError:
-            return 0.0
-
-    def _process_step(self, global_step, song_time):
-        for voice_index in xrange(4):
-            voice = self._voices[voice_index]
-            self._playheads[voice_index] = global_step % voice.tracks["gate"].step_count
-            for parameter in PARAMETERS + ["gate"]:
-                self._param_playheads[parameter][voice_index] = global_step % voice.tracks[parameter].step_count
-
-            if voice.tracks["gate"].get_value(global_step) <= 0:
-                continue
-
-            note_value = int(voice.tracks["note"].get_value(global_step))
-            velocity_index = int(voice.tracks["velocity"].get_value(global_step))
-            octave_index = int(voice.tracks["octave"].get_value(global_step))
-            gate_length_index = int(voice.tracks["gate_length"].get_value(global_step))
-
-            if note_value < 0:
-                note_value = 0
-            elif note_value > 127:
-                note_value = 127
-
-            pitch = note_value + (12 * OCTAVE_VALUES[max(0, min(6, octave_index))])
-            pitch = max(0, min(127, pitch))
-            velocity = VELOCITY_VALUES[max(0, min(6, velocity_index))]
-            channel = VOICE_CHANNELS[voice_index]
-
-            self._send_voice_ccs(voice_index, global_step)
-            self._send_note_on(voice_index, channel, pitch, velocity)
-
-            gate_fraction = GATE_LENGTH_VALUES[max(0, min(6, gate_length_index))]
-            self._pending_note_offs.append({
-                "voice": voice_index,
-                "channel": channel,
-                "pitch": pitch,
-                "time": song_time + (self._quantization * gate_fraction)
-            })
-
-    def _send_voice_ccs(self, voice_index, global_step):
-        voice = self._voices[voice_index]
-        channel = VOICE_CHANNELS[voice_index]
-        for cc_offset, parameter in enumerate(("cc1", "cc2", "cc3", "cc4")):
-            value_index = int(voice.tracks[parameter].get_value(global_step))
-            value_index = max(0, min(6, value_index))
-            self._send_cc(channel, CC_NUMBERS[cc_offset], CC_VALUES[value_index])
-
-    def _send_note_on(self, voice_index, channel, pitch, velocity):
-        self._cancel_note_offs_for_voice(voice_index)
-        if self._active_notes[voice_index] is not None:
-            self._send_note_off(channel, self._active_notes[voice_index])
-        self._active_notes[voice_index] = pitch
-        self._send_midi((144 + channel, pitch, velocity))
-
-    def _send_note_off(self, channel, pitch):
-        self._send_midi((128 + channel, pitch, 0))
-
-    def _send_cc(self, channel, cc_number, cc_value):
-        self._send_midi((176 + channel, cc_number, cc_value))
-
-    def _send_midi(self, message):
-        try:
-            self._control_surface._send_midi(message)
-        except RuntimeError:
-            pass
-
-    def _flush_note_offs(self, song_time):
-        remaining = []
-        for event in self._pending_note_offs:
-            if song_time >= event["time"]:
-                self._send_note_off(event["channel"], event["pitch"])
-                if self._active_notes[event["voice"]] == event["pitch"]:
-                    self._active_notes[event["voice"]] = None
-            else:
-                remaining.append(event)
-        self._pending_note_offs = remaining
-
-    def _cancel_note_offs_for_voice(self, voice_index):
-        self._pending_note_offs = [event for event in self._pending_note_offs if event["voice"] != voice_index]
-
-    def _stop_all_notes(self):
-        for voice_index, note_value in enumerate(self._active_notes):
-            if note_value is not None:
-                self._send_note_off(VOICE_CHANNELS[voice_index], note_value)
-                self._active_notes[voice_index] = None
-        self._pending_note_offs = []
-
-    def _matrix_value(self, value, x, y, is_momentary):
-        if not self.is_enabled() or self._matrix is None:
-            return
-
-        key = (x, y)
-        if value != 0:
-            self._matrix_press_times[key] = time.time()
-            self._handle_matrix_press(x, y)
-            return
-
-        press_time = self._matrix_press_times.pop(key, None)
-        if press_time is None:
-            return
-
-        self._handle_matrix_release(x, y, time.time() - press_time)
-
-    def _handle_matrix_press(self, x, y):
-        if self._edit_mode == MODE_NOTE:
-            self._handle_note_press(x, y)
-        elif self._edit_mode == MODE_LENGTH:
-            self._handle_length_press(x, y)
-        elif self._edit_mode != MODE_STEP:
-            self._handle_fader_press(x, y)
-
-    def _handle_matrix_release(self, x, y, duration):
-        if self._edit_mode != MODE_STEP:
-            return
-        if y >= 4:
-            return
-
-        voice_index = self._selected_voice_pair * 2 + (y // 2)
-        step_index = x + ((y % 2) * 8)
-        self._selected_voice = voice_index
-        self._selected_step = step_index
-
-        if duration >= LONG_PRESS:
-            self._selected_param = "note"
-            self._edit_mode = MODE_NOTE
-            self._current_page = 0 if step_index < 8 else 1
-        else:
-            gate_track = self._voices[voice_index].tracks["gate"]
-            gate_value = gate_track.values[step_index]
-            gate_track.values[step_index] = 0 if gate_value > 0 else 1
-        self._force_update = True
-
-    def _handle_note_press(self, x, y):
-        if y >= 7:
-            return
-
-        step_index = (self._current_page * STEPS_PER_PAGE) + x
-        voice = self._voices[self._selected_voice]
-        if voice.tracks["gate"].values[step_index] <= 0:
-            return
-
-        voice.tracks["note"].values[step_index] = self._note_value_for_row(y)
-        self._selected_step = step_index
-        self._force_update = True
-
-    def _handle_fader_press(self, x, y):
-        if y >= 7:
-            return
-
-        step_index = (self._current_page * STEPS_PER_PAGE) + x
-        value_index = 6 - y
-        voice = self._voices[self._selected_voice]
-        voice.tracks[self._selected_param].values[step_index] = value_index
-        self._selected_step = step_index
-        self._force_update = True
-
-    def _handle_length_press(self, x, y):
-        if y >= 4:
-            return
-
-        step_index = x + ((y % 2) * 8)
-        self._voices[self._selected_voice].tracks[self._selected_param].step_count = step_index + 1
-        self._selected_step = step_index
-        self._force_update = True
-
-    def _side_value(self, value, sender):
-        if not self.is_enabled():
-            return
-
-        index = self._side_buttons.index(sender)
-        parameter = PARAMETERS[index]
-        if value != 0:
-            self._side_press_times[sender] = time.time()
-            return
-
-        press_time = self._side_press_times.pop(sender, None)
-        if press_time is None:
-            return
-
-        duration = time.time() - press_time
-        self._selected_param = parameter
-        if duration >= LONG_PRESS:
-            self._edit_mode = MODE_LENGTH
-        elif parameter == "note":
-            self._edit_mode = MODE_STEP if self._edit_mode == MODE_NOTE else MODE_NOTE
-        else:
-            self._edit_mode = MODE_STEP if (self._edit_mode == parameter) else parameter
-        self._force_update = True
-
-    def _top_value(self, value, sender):
-        if not self.is_enabled():
-            return
-
-        index = self._top_buttons.index(sender)
-        if value != 0:
-            self._top_press_times[sender] = time.time()
-            if index == 0:
-                self._toggle_selected_voice()
-            elif index == 1:
-                self._toggle_voice_pair()
-            elif index == 2:
-                self._current_page = 1 - self._current_page
-            self._force_update = True
-            return
-
-        press_time = self._top_press_times.pop(sender, None)
-        if press_time is None:
-            return
-
-        duration = time.time() - press_time
-        if index == 3:
-            if duration >= LONG_PRESS:
-                self._reset_voice(self._selected_voice)
-            else:
-                self._randomize_voice(self._selected_voice)
-            self._force_update = True
-
-    def _toggle_selected_voice(self):
-        pair_start = self._selected_voice_pair * 2
-        self._selected_voice = pair_start + (1 - (self._selected_voice - pair_start))
-
-    def _toggle_voice_pair(self):
-        offset = self._selected_voice % 2
-        self._selected_voice_pair = 1 - self._selected_voice_pair
-        self._selected_voice = (self._selected_voice_pair * 2) + offset
-
-    def _reset_voice(self, voice_index):
-        voice = self._voices[voice_index]
-        for parameter in PARAMETERS + ["gate"]:
-            voice.tracks[parameter].reset()
-        self._control_surface.show_message("POLYMETRIC VOICE %d RESET" % (voice_index + 1))
-
-    def _randomize_voice(self, voice_index):
-        voice = self._voices[voice_index]
-        for step_index in xrange(MAX_STEPS):
-            voice.tracks["gate"].values[step_index] = 1 if randrange(0, 100) < (70 if step_index % 2 == 0 else 45) else 0
-            voice.tracks["note"].values[step_index] = self._note_value_for_row(randrange(0, 7))
-            voice.tracks["velocity"].values[step_index] = randrange(0, 7)
-            voice.tracks["octave"].values[step_index] = randrange(0, 7)
-            voice.tracks["gate_length"].values[step_index] = randrange(0, 7)
-            voice.tracks["cc1"].values[step_index] = randrange(0, 7)
-            voice.tracks["cc2"].values[step_index] = randrange(0, 7)
-            voice.tracks["cc3"].values[step_index] = randrange(0, 7)
-            voice.tracks["cc4"].values[step_index] = randrange(0, 7)
-        self._control_surface.show_message("POLYMETRIC VOICE %d RANDOMIZED" % (voice_index + 1))
-
-    def _update_buttons(self):
-        for index, button in enumerate(self._side_buttons):
-            parameter = PARAMETERS[index]
-            if self._edit_mode == MODE_LENGTH and parameter == self._selected_param:
-                button.set_light("PolymetricSequencer.SideLength")
-            elif (parameter == "note" and self._edit_mode == MODE_NOTE) or self._edit_mode == parameter:
-                button.set_light("PolymetricSequencer.SideOn")
-            else:
-                button.set_light("PolymetricSequencer.SideOff")
-
-        for index, button in enumerate(self._top_buttons):
-            if index == 0:
-                button.set_light("PolymetricSequencer.TopVoiceB" if (self._selected_voice % 2) else "PolymetricSequencer.TopVoiceA")
-            elif index == 1:
-                button.set_light("PolymetricSequencer.TopPairB" if self._selected_voice_pair else "PolymetricSequencer.TopPairA")
-            elif index == 2:
-                button.set_light("PolymetricSequencer.TopPageB" if self._current_page else "PolymetricSequencer.TopPageA")
-            else:
-                button.set_light("PolymetricSequencer.TopRandom")
-
-    def _update_matrix(self):
-        if self._matrix is None:
-            return
-
-        for x in xrange(8):
-            for y in xrange(8):
-                self._grid_back_buffer[x][y] = "PolymetricSequencer.Blank"
-
-        if self._edit_mode == MODE_STEP:
-            self._render_step_grid()
-        elif self._edit_mode == MODE_NOTE:
-            self._render_note_grid()
-        elif self._edit_mode == MODE_LENGTH:
-            self._render_length_grid()
-        else:
-            self._render_fader_grid()
-
-        for x in xrange(8):
-            for y in xrange(8):
-                if self._grid_back_buffer[x][y] != self._grid_buffer[x][y] or self._force_update:
-                    self._grid_buffer[x][y] = self._grid_back_buffer[x][y]
-                    self._matrix.get_button(x, y).set_light(self._grid_buffer[x][y])
-
-        self._force_update = False
-
-    def _render_step_grid(self):
-        pair_start = self._selected_voice_pair * 2
-        blink_on = self._last_blink % 2 == 0
-        for visible_voice in xrange(2):
-            voice_index = pair_start + visible_voice
-            base_row = visible_voice * 2
-            gate_track = self._voices[voice_index].tracks["gate"]
-            playhead = self._playheads[voice_index]
-            for step_index in xrange(MAX_STEPS):
-                x = step_index % 8
-                y = base_row + (step_index // 8)
-                color = "PolymetricSequencer.StepOff"
-                if gate_track.values[step_index] > 0:
-                    color = STEP_ON_COLORS[voice_index]
-                if step_index == playhead:
-                    color = PLAYHEAD_COLORS[voice_index]
-                if voice_index == self._selected_voice and step_index == self._selected_step and blink_on:
-                    color = "PolymetricSequencer.StepSelected"
-                self._grid_back_buffer[x][y] = color
-
-    def _render_note_grid(self):
-        voice = self._voices[self._selected_voice]
-        playhead = self._param_playheads["note"][self._selected_voice]
-        for x in xrange(8):
-            step_index = (self._current_page * STEPS_PER_PAGE) + x
-            note_value = voice.tracks["note"].values[step_index]
-            gate_on = voice.tracks["gate"].values[step_index] > 0
-            for y in xrange(7):
-                row_note = self._note_value_for_row(y)
-                if note_value == row_note:
-                    if gate_on:
-                        color = "PolymetricSequencer.NoteOn"
-                    else:
-                        color = "PolymetricSequencer.NoteDim"
-                else:
-                    color = "PolymetricSequencer.NoteOff"
-                self._grid_back_buffer[x][y] = color
-            if (playhead // STEPS_PER_PAGE) == self._current_page and (playhead % STEPS_PER_PAGE) == x:
-                self._grid_back_buffer[x][7] = PLAYHEAD_COLORS[self._selected_voice]
-            else:
-                self._grid_back_buffer[x][7] = "PolymetricSequencer.PageMarker"
-
-    def _render_fader_grid(self):
-        voice = self._voices[self._selected_voice]
-        playhead = self._param_playheads[self._selected_param][self._selected_voice]
-        bar_mode = self._selected_param != "octave"
-        for x in xrange(8):
-            step_index = (self._current_page * STEPS_PER_PAGE) + x
-            value = int(voice.tracks[self._selected_param].values[step_index])
-            gate_on = voice.tracks["gate"].values[step_index] > 0
-            for y in xrange(7):
-                row_value = 6 - y
-                if bar_mode:
-                    enabled = value >= row_value
-                else:
-                    enabled = value == row_value
-
-                if enabled:
-                    if gate_on:
-                        color = "PolymetricSequencer.FaderOn"
-                    else:
-                        color = "PolymetricSequencer.FaderDim"
-                else:
-                    color = "PolymetricSequencer.FaderOff"
-                self._grid_back_buffer[x][y] = color
-
-            if (playhead // STEPS_PER_PAGE) == self._current_page and (playhead % STEPS_PER_PAGE) == x:
-                self._grid_back_buffer[x][7] = PLAYHEAD_COLORS[self._selected_voice]
-            else:
-                self._grid_back_buffer[x][7] = "PolymetricSequencer.PageMarker"
-
-    def _render_length_grid(self):
-        pair_start = self._selected_voice_pair * 2
-        selected_row_offset = self._selected_voice - pair_start
-        if selected_row_offset < 0 or selected_row_offset > 1:
-            selected_row_offset = 0
-        base_row = selected_row_offset * 2
-        track_length = self._voices[self._selected_voice].tracks[self._selected_param].step_count
-        for step_index in xrange(MAX_STEPS):
-            x = step_index % 8
-            y = base_row + (step_index // 8)
-            if step_index == (track_length - 1):
-                color = "PolymetricSequencer.LengthSelected"
-            elif step_index < track_length:
-                color = "PolymetricSequencer.LengthOn"
-            else:
-                color = "PolymetricSequencer.LengthOff"
-            self._grid_back_buffer[x][y] = color
-
-    def _update_osd(self):
-        if self._osd is None:
-            return
-
-        self._osd.set_mode("Polymetric Step Sequencer")
-        self._osd.attributes[0] = PARAMETER_LABELS[self._selected_param]
-        self._osd.attribute_names[0] = "Parameter"
-        self._osd.attributes[1] = str(self._selected_voice + 1)
-        self._osd.attribute_names[1] = "Voice"
-        self._osd.attributes[2] = str(self._selected_voice_pair + 1)
-        self._osd.attribute_names[2] = "Pair"
-        self._osd.attributes[3] = str(self._current_page + 1)
-        self._osd.attribute_names[3] = "Page"
-        self._osd.attributes[4] = KEY_NAMES[self.song().root_note % 12]
-        self._osd.attribute_names[4] = "Root"
-        self._osd.attributes[5] = self.song().scale_name
-        self._osd.attribute_names[5] = "Scale"
-        self._osd.attributes[6] = self._edit_mode.title()
-        self._osd.attribute_names[6] = "View"
-        self._osd.attributes[7] = "1/16"
-        self._osd.attribute_names[7] = "Rate"
-
-        selected_track = self.song().view.selected_track
-        self._osd.info[0] = "track : %s" % selected_track.name if selected_track is not None else "track : none"
-        self._osd.info[1] = "channels : 1-4 / cc : 1-4"
-        self._osd.update()
-
-    def _note_value_for_row(self, row):
-        scale_name = self.song().scale_name
-        intervals = SCALE_INTERVALS.get(scale_name, DEFAULT_SCALE_INTERVALS)
-        expanded = []
-        octave = 0
-        while len(expanded) < 7:
-            for interval in intervals:
-                expanded.append(interval + (12 * octave))
-                if len(expanded) >= 7:
-                    break
-            octave += 1
-
-        row_index = 6 - row
-        return self.song().root_note + (12 * NOTE_EDITOR_BASE_OCTAVE) + expanded[row_index]
+MODE_LANE = dict((value, key) for key, value in LANE_MODE.items())
+METADATA_RE = re.compile(r"\s*\[poly:g(\d+),p(\d+),o(\d+),v(\d+),l(\d+)\]\s*")
+MAX_POLY_STEPS = 128
+
+
+class PolymetricNoteEditorComponent(MelodicNoteEditorComponent):
+
+	def __init__(self, step_sequencer, matrix, side_buttons, control_surface):
+		self._gate_button = None
+		self._last_side_press_times = {}
+		super(PolymetricNoteEditorComponent, self).__init__(step_sequencer, matrix, side_buttons, control_surface)
+		self._mode = POLY_MODE_PITCH
+		self._selected_length_lane = LANE_GATE
+		self._set_default_lane_lengths()
+		self.set_gate_button(self._side_buttons[3])
+
+	def disconnect(self):
+		self._gate_button = None
+		super(PolymetricNoteEditorComponent, self).disconnect()
+
+	def _init_data(self):
+		super(PolymetricNoteEditorComponent, self)._init_data()
+		self._notes_gates = [0] * MAX_POLY_STEPS
+		self._set_default_lane_lengths()
+
+	def _set_default_lane_lengths(self):
+		self._lane_lengths = {
+			LANE_GATE: 8,
+			LANE_PITCH: 8,
+			LANE_OCTAVE: 8,
+			LANE_VELOCITY: 8,
+			LANE_LENGTH: 8
+		}
+
+	def set_clip(self, clip):
+		if self._clip != clip:
+			self._init_data()
+			self._clip = clip
+			self._parse_metadata()
+
+	def set_mode(self, mode):
+		if mode != POLY_MODE_LANE_LENGTH:
+			self._selected_length_lane = MODE_LANE.get(mode, self._selected_length_lane)
+		self._mode = mode
+		self._force_update = True
+		self.update()
+
+	def set_key_indexes(self, key_indexes):
+		if self._key_indexes != key_indexes:
+			self._key_indexes = key_indexes
+			self._normalize_pitch_indexes()
+			self._update_clip_notes()
+
+	def _normalize_pitch_indexes(self):
+		for step in xrange(MAX_POLY_STEPS):
+			has_pitch = False
+			for note_index in xrange(7):
+				if self._notes_pitches[step * 7 + note_index] == 1:
+					has_pitch = True
+			if not has_pitch:
+				self._notes_pitches[step * 7] = 1
+
+	def _default_length_from_clip(self):
+		if self._clip == None:
+			return 8
+		try:
+			steps = int((self._clip.loop_end - self._clip.loop_start) / self._quantization)
+		except (RuntimeError, ZeroDivisionError):
+			steps = 8
+		return max(1, min(MAX_POLY_STEPS, steps))
+
+	def _parse_metadata(self):
+		default_length = self._default_length_from_clip()
+		for lane in LANE_ORDER:
+			self._lane_lengths[lane] = default_length
+
+		if self._clip == None:
+			return
+		name = self._clip.name or ""
+		match = METADATA_RE.search(name)
+		if match == None:
+			return
+		values = {
+			LANE_GATE: int(match.group(1)),
+			LANE_PITCH: int(match.group(2)),
+			LANE_OCTAVE: int(match.group(3)),
+			LANE_VELOCITY: int(match.group(4)),
+			LANE_LENGTH: int(match.group(5))
+		}
+		for lane, value in values.items():
+			self._lane_lengths[lane] = max(1, min(MAX_POLY_STEPS, value))
+
+	def _write_metadata(self):
+		if self._clip == None:
+			return
+		try:
+			name = self._clip.name or ""
+			base_name = METADATA_RE.sub("", name).strip()
+			token = "[poly:g%d,p%d,o%d,v%d,l%d]" % (
+				self._lane_lengths[LANE_GATE],
+				self._lane_lengths[LANE_PITCH],
+				self._lane_lengths[LANE_OCTAVE],
+				self._lane_lengths[LANE_VELOCITY],
+				self._lane_lengths[LANE_LENGTH]
+			)
+			self._clip.name = ("%s %s" % (base_name, token)).strip()
+		except RuntimeError:
+			pass
+
+	def _parse_notes(self):
+		for index in xrange(len(self._notes_pitches)):
+			self._notes_pitches[index] = 0
+		for index in xrange(MAX_POLY_STEPS):
+			self._notes_gates[index] = 0
+			self._notes_velocities[index] = 4
+			self._notes_octaves[index] = 2
+			self._notes_lengths[index] = 3
+
+		first_note = [True] * MAX_POLY_STEPS
+		for note in self._note_cache:
+			note_position = note[1]
+			note_key = note[0]
+			note_length = note[2]
+			note_velocity = note[3]
+			note_muted = note[4]
+			step = int(note_position / self._quantization)
+			if note_muted or step < 0 or step >= MAX_POLY_STEPS or not first_note[step]:
+				continue
+
+			first_note[step] = False
+			self._notes_gates[step] = 1
+
+			for value_index in xrange(7):
+				if note_velocity >= self._velocity_map[value_index]:
+					self._notes_velocities[step] = value_index
+
+			for value_index in xrange(7):
+				if note_length * 4 >= self._length_map[value_index] * self._quantization:
+					self._notes_lengths[step] = value_index
+
+			found = False
+			for note_index in xrange(min(7, len(self._key_indexes))):
+				for octave in xrange(7):
+					if note_key == self._key_indexes[note_index] + 12 * (octave - 2) and not found:
+						found = True
+						self._notes_octaves[step] = octave
+						self._notes_pitches[step * 7 + note_index] = 1
+			if not found:
+				self._notes_pitches[step * 7] = 1
+
+		self._normalize_pitch_indexes()
+		self._update_matrix()
+
+	def _lane_value_step(self, step, lane):
+		return step % self._lane_lengths[lane]
+
+	def _pitch_index_for_step(self, step):
+		pitch_step = self._lane_value_step(step, LANE_PITCH)
+		for note_index in xrange(7):
+			if self._notes_pitches[pitch_step * 7 + note_index] == 1:
+				return note_index
+		return 0
+
+	def _update_clip_notes(self):
+		if self._clip != None and self._step_sequencer.is_enabled():
+			note_cache = []
+			try:
+				start = int(self._clip.loop_start / self._quantization)
+				end = int(self._clip.loop_end / self._quantization)
+			except (RuntimeError, ZeroDivisionError):
+				start = 0
+				end = MAX_POLY_STEPS
+			start = max(0, min(MAX_POLY_STEPS, start))
+			end = max(start, min(MAX_POLY_STEPS, end))
+
+			for step in xrange(start, end):
+				gate_step = self._lane_value_step(step, LANE_GATE)
+				if self._notes_gates[gate_step] != 1:
+					continue
+
+				octave_step = self._lane_value_step(step, LANE_OCTAVE)
+				velocity_step = self._lane_value_step(step, LANE_VELOCITY)
+				length_step = self._lane_value_step(step, LANE_LENGTH)
+				pitch_index = self._pitch_index_for_step(step)
+
+				time_value = step * self._quantization
+				velocity = self._velocity_map[self._notes_velocities[velocity_step]]
+				length = self._length_map[self._notes_lengths[length_step]] * self._quantization / 4.0
+				pitch = self._key_indexes[pitch_index] + 12 * (self._notes_octaves[octave_step] - 2)
+				if pitch >= 0 and pitch < 128 and velocity >= 0 and velocity < 128 and length >= 0:
+					note_cache.append([pitch, time_value, length, velocity, False])
+
+			self._write_metadata()
+			self._clip.select_all_notes()
+			self._clip.replace_selected_notes(tuple(note_cache))
+
+	def _active_lane(self):
+		return MODE_LANE.get(self._mode, self._selected_length_lane)
+
+	def _active_lane_length(self):
+		return self._lane_lengths[self._selected_length_lane]
+
+	def _playhead_step_for_lane(self, lane):
+		if self._playhead == None:
+			return None
+		return int(self._playhead / self.quantization) % self._lane_lengths[lane]
+
+	def _update_matrix(self):
+		if self.is_enabled() and self._matrix != None:
+			for x in xrange(8):
+				for y in xrange(8):
+					self._grid_back_buffer[x][y] = 0
+
+			if self._clip != None:
+				if self._mode == POLY_MODE_LANE_LENGTH:
+					self._render_lane_length()
+				else:
+					self._render_parameter_page()
+			else:
+				for x in xrange(8):
+					for y in xrange(8):
+						self._grid_back_buffer[x][y] = "DefaultButton.Disabled"
+
+			for x in xrange(8):
+				for y in xrange(8):
+					if self._grid_back_buffer[x][y] != self._grid_buffer[x][y] or self._force_update:
+						self._grid_buffer[x][y] = self._grid_back_buffer[x][y]
+						self._matrix.get_button(x, y).set_light(self._grid_buffer[x][y])
+
+			self._force_update = False
+
+	def _render_parameter_page(self):
+		lane = self._active_lane()
+		playhead_step = self._playhead_step_for_lane(lane)
+		for x in xrange(8):
+			step = x + 8 * self._page
+			gate_on = self._notes_gates[self._lane_value_step(step, LANE_GATE)] == 1
+			has_note = gate_on
+			for y in xrange(7):
+				if self._mode == POLY_MODE_PITCH:
+					value_step = self._lane_value_step(step, LANE_PITCH)
+					color = "PolymetricSequencer.NoteOn" if self._notes_pitches[value_step * 7 + 6 - y] == 1 else "PolymetricSequencer.NoteOff"
+				elif self._mode == POLY_MODE_OCTAVE:
+					value_step = self._lane_value_step(step, LANE_OCTAVE)
+					color = self._value_color(self._notes_octaves[value_step] == 6 - y, has_note)
+				elif self._mode == POLY_MODE_VELOCITY:
+					value_step = self._lane_value_step(step, LANE_VELOCITY)
+					color = self._value_color(self._notes_velocities[value_step] >= 6 - y, has_note)
+				elif self._mode == POLY_MODE_LENGTH:
+					value_step = self._lane_value_step(step, LANE_LENGTH)
+					color = self._value_color(self._notes_lengths[value_step] >= 6 - y, has_note)
+				else:
+					value_step = self._lane_value_step(step, LANE_GATE)
+					if self._notes_gates[value_step] == 1 and y == 3:
+						color = "PolymetricSequencer.NoteOn"
+					elif self._notes_gates[value_step] == 1:
+						color = "PolymetricSequencer.NoteDim"
+					else:
+						color = "PolymetricSequencer.NoteOff"
+				self._grid_back_buffer[x][y] = color
+
+			if playhead_step != None and playhead_step == (step % self._lane_lengths[lane]):
+				self._grid_back_buffer[x][7] = "PolymetricSequencer.Playhead1"
+			else:
+				self._grid_back_buffer[x][7] = "PolymetricSequencer.PageMarker"
+
+	def _value_color(self, enabled, has_note):
+		if enabled:
+			if has_note:
+				return "PolymetricSequencer.FaderOn"
+			return "PolymetricSequencer.FaderDim"
+		return "PolymetricSequencer.FaderOff"
+
+	def _render_lane_length(self):
+		selected_length = self._active_lane_length()
+		base_step = self._page * 64
+		for y in xrange(8):
+			for x in xrange(8):
+				step = base_step + y * 8 + x
+				if step >= MAX_POLY_STEPS:
+					self._grid_back_buffer[x][y] = "PolymetricSequencer.Blank"
+				elif step == selected_length - 1:
+					self._grid_back_buffer[x][y] = "PolymetricSequencer.LengthSelected"
+				elif step < selected_length:
+					self._grid_back_buffer[x][y] = "PolymetricSequencer.LengthOn"
+				else:
+					self._grid_back_buffer[x][y] = "PolymetricSequencer.LengthOff"
+
+	def _length_step_from_grid(self, x, y):
+		return self._page * 64 + y * 8 + x
+
+	def _parameter_step_from_grid(self, x):
+		return x + 8 * self._page
+
+	def _matrix_value(self, value, x, y, is_momentary):
+		if self.is_enabled() and self._matrix != None:
+			if self._clip == None:
+				self._step_sequencer.create_clip()
+			elif ((value != 0) or (not is_momentary)):
+				step = self._length_step_from_grid(x, y) if self._mode == POLY_MODE_LANE_LENGTH else self._parameter_step_from_grid(x)
+				if step < 0 or step >= MAX_POLY_STEPS:
+					return
+				if self._mode == POLY_MODE_LANE_LENGTH:
+					self._lane_lengths[self._selected_length_lane] = step + 1
+					self._write_metadata()
+				elif y < 7:
+					self._handle_parameter_press(step, y)
+				self._force_update = True
+				self._update_matrix()
+				self._update_clip_notes()
+
+	def _handle_parameter_press(self, step, y):
+		if self._mode == POLY_MODE_PITCH:
+			value_step = self._lane_value_step(step, LANE_PITCH)
+			for yy in xrange(7):
+				self._notes_pitches[value_step * 7 + yy] = 0
+			self._notes_pitches[value_step * 7 + 6 - y] = 1
+			self._notes_gates[self._lane_value_step(step, LANE_GATE)] = 1
+		elif self._mode == POLY_MODE_OCTAVE:
+			self._notes_octaves[self._lane_value_step(step, LANE_OCTAVE)] = 6 - y
+		elif self._mode == POLY_MODE_VELOCITY:
+			self._notes_velocities[self._lane_value_step(step, LANE_VELOCITY)] = 6 - y
+		elif self._mode == POLY_MODE_LENGTH:
+			self._notes_lengths[self._lane_value_step(step, LANE_LENGTH)] = 6 - y
+		elif self._mode == POLY_MODE_GATE:
+			value_step = self._lane_value_step(step, LANE_GATE)
+			self._notes_gates[value_step] = 0 if self._notes_gates[value_step] == 1 else 1
+
+	def _button_released_as_length_edit(self, sender, lane):
+		press_time = self._last_side_press_times.pop(sender, None)
+		if press_time == None:
+			return False
+		if time.time() - press_time > 0.5:
+			self._selected_length_lane = lane
+			self.set_mode(POLY_MODE_LANE_LENGTH)
+			self._control_surface.show_message("%s length" % lane)
+			self._step_sequencer._update_OSD()
+			return True
+		return False
+
+	def _update_random_button(self):
+		self._update_gate_button()
+
+	def set_random_button(self, button):
+		self.set_gate_button(button)
+
+	def set_gate_button(self, button):
+		assert isinstance(button, (ButtonElement, type(None)))
+		current_button = getattr(self, "_gate_button", None)
+		if current_button != button:
+			if current_button != None:
+				current_button.remove_value_listener(self._gate_button_value)
+			self._gate_button = button
+			if self._gate_button != None:
+				self._gate_button.add_value_listener(self._gate_button_value, identify_sender=True)
+
+	def _update_gate_button(self):
+		if self.is_enabled() and self._gate_button != None:
+			if self._clip != None:
+				if self._mode == POLY_MODE_LANE_LENGTH and self._selected_length_lane == LANE_GATE:
+					self._gate_button.set_light("PolymetricSequencer.SideLength")
+				else:
+					self._gate_button.set_on_off_values("PolymetricSequencer.SideOn", "PolymetricSequencer.SideOff")
+					if self._mode == POLY_MODE_GATE:
+						self._gate_button.turn_on()
+					else:
+						self._gate_button.turn_off()
+			else:
+				self._gate_button.set_light("DefaultButton.Disabled")
+
+	def _gate_button_value(self, value, sender):
+		if self.is_enabled() and self._clip != None:
+			if value != 0 or not sender.is_momentary():
+				self._last_side_press_times[sender] = time.time()
+			else:
+				if not self._button_released_as_length_edit(sender, LANE_GATE):
+					self.set_mode(POLY_MODE_GATE)
+					self._control_surface.show_message("gate")
+					self._step_sequencer._update_OSD()
+
+	def _update_mode_notes_pitches_button(self):
+		self._update_lane_button(self._mode_notes_pitches_button, POLY_MODE_PITCH, LANE_PITCH, "StepSequencer2.Pitch.On", "StepSequencer2.Pitch.Dim")
+
+	def _update_mode_notes_octaves_button(self):
+		self._update_lane_button(self._mode_notes_octaves_button, POLY_MODE_OCTAVE, LANE_OCTAVE, "StepSequencer2.Octave.On", "StepSequencer2.Octave.Dim")
+
+	def _update_mode_notes_velocities_button(self):
+		self._update_lane_button(self._mode_notes_velocities_button, POLY_MODE_VELOCITY, LANE_VELOCITY, "StepSequencer2.Velocity.On", "StepSequencer2.Velocity.Dim")
+
+	def _update_mode_notes_lengths_button(self):
+		self._update_lane_button(self._mode_notes_lengths_button, POLY_MODE_LENGTH, LANE_LENGTH, "StepSequencer2.Length.On", "StepSequencer2.Length.Dim")
+
+	def _update_lane_button(self, button, mode, lane, on_color, off_color):
+		if self.is_enabled() and button != None:
+			if self._clip != None:
+				if self._mode == POLY_MODE_LANE_LENGTH and self._selected_length_lane == lane:
+					button.set_light("PolymetricSequencer.SideLength")
+				else:
+					button.set_on_off_values(on_color, off_color)
+					if self._mode == mode:
+						button.turn_on()
+					else:
+						button.turn_off()
+			else:
+				button.set_light("DefaultButton.Disabled")
+
+	def _mode_button_notes_pitches_value(self, value, sender):
+		self._lane_button_value(value, sender, LANE_PITCH, POLY_MODE_PITCH, "pitch")
+
+	def _mode_button_notes_octaves_value(self, value, sender):
+		self._lane_button_value(value, sender, LANE_OCTAVE, POLY_MODE_OCTAVE, "octave")
+
+	def _mode_button_notes_velocities_value(self, value, sender):
+		self._lane_button_value(value, sender, LANE_VELOCITY, POLY_MODE_VELOCITY, "velocity")
+
+	def _mode_button_notes_lengths_value(self, value, sender):
+		self._lane_button_value(value, sender, LANE_LENGTH, POLY_MODE_LENGTH, "length")
+
+	def _lane_button_value(self, value, sender, lane, mode, message):
+		if self.is_enabled() and self._clip != None:
+			if value != 0 or not sender.is_momentary():
+				self._last_side_press_times[sender] = time.time()
+			else:
+				if not self._button_released_as_length_edit(sender, lane):
+					self.set_mode(mode)
+					self._control_surface.show_message(message)
+					self._step_sequencer._update_OSD()
+
+
+class PolymetricSequencerComponent(StepSequencerComponent2):
+
+	def __init__(self, matrix, side_buttons, top_buttons, control_surface):
+		super(PolymetricSequencerComponent, self).__init__(matrix, side_buttons, top_buttons, control_surface)
+		self._name = "polymetric step sequencer"
+
+	def _set_note_editor(self):
+		self._note_editor = self.register_component(PolymetricNoteEditorComponent(self, self._matrix, self._side_buttons, self._control_surface))
+
+	def _update_OSD(self):
+		if self._osd != None:
+			self._osd.set_mode("Polymetric Step Sequencer")
+			if self._clip != None:
+				self._osd.attributes[0] = MUSICAL_MODES[self._scale_selector._modus * 2]
+				self._osd.attribute_names[0] = "Scale"
+				self._osd.attributes[1] = KEY_NAMES[self._scale_selector._key % 12]
+				self._osd.attribute_names[1] = "Root Note"
+				self._osd.attributes[2] = self._scale_selector._octave
+				self._osd.attribute_names[2] = "Octave"
+				self._osd.attributes[3] = QUANTIZATION_NAMES[self._quantization_index]
+				self._osd.attribute_names[3] = "Quantisation"
+				active_lane = self._note_editor._active_lane()
+				if self._note_editor._mode == POLY_MODE_LANE_LENGTH:
+					self._osd.attributes[4] = "%s %d" % (self._note_editor._selected_length_lane, self._note_editor._active_lane_length())
+					self._osd.attribute_names[4] = "Seq Length"
+				else:
+					self._osd.attributes[4] = active_lane
+					self._osd.attribute_names[4] = "Parameter"
+				self._osd.attributes[5] = "%d/%d/%d/%d/%d" % (
+					self._note_editor._lane_lengths[LANE_GATE],
+					self._note_editor._lane_lengths[LANE_PITCH],
+					self._note_editor._lane_lengths[LANE_OCTAVE],
+					self._note_editor._lane_lengths[LANE_VELOCITY],
+					self._note_editor._lane_lengths[LANE_LENGTH]
+				)
+				self._osd.attribute_names[5] = "G/P/O/V/L"
+				self._osd.attributes[6] = " "
+				self._osd.attribute_names[6] = " "
+				self._osd.attributes[7] = " "
+				self._osd.attribute_names[7] = " "
+			else:
+				for index in xrange(8):
+					self._osd.attributes[index] = " "
+					self._osd.attribute_names[index] = " "
+
+			if self._selected_track != None:
+				if self._lock_to_track and self._is_locked:
+					self._osd.info[0] = "track : " + self._selected_track.name + " (locked)"
+				else:
+					self._osd.info[0] = "track : " + self._selected_track.name
+			else:
+				self._osd.info[0] = " "
+			if self._clip != None:
+				name = self._clip.name
+				if name == "":
+					name = "(unamed clip)"
+				if not self._lock_to_track and self._is_locked:
+					self._osd.info[1] = "clip : " + name + " (locked)"
+				else:
+					self._osd.info[1] = "clip : " + name
+			else:
+				self._osd.info[1] = "no clip selected"
+			self._osd.update()

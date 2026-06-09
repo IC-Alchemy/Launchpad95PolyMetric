@@ -31,3 +31,15 @@ The current polymetric sequencer implementation is not yet aligned with the actu
 
 ## Next Step
 Rework the polymetric sequencer architecture rather than only patching small behavior details.
+
+# 6/8/2026
+
+## Implementation Update
+- Replaced the realtime four-voice polymetric engine with a clip-backed sequencer based on the melodic step sequencer architecture.
+- The polymetric mode now targets one selected MIDI clip, one voice, and the full 8x8 grid.
+- Added independent polymetric lane lengths for gate, pitch, octave, velocity, and note length.
+- Lane lengths persist in the MIDI clip name with a `[poly:g...,p...,o...,v...,l...]` metadata token.
+- Removed the realtime MIDI voice/channel/CC model from the polymetric component.
+
+## Current Focus
+- Manual Ableton testing is still needed for clip creation, mode switching, lane-length editing, clip-name metadata persistence, and playback playhead display.
