@@ -11,6 +11,8 @@ Port Pico2Seq-style sequencer behavior into Launchpad95 as a new User2 mode.
 - The new polymetric sequencer mode is visible and selectable.
 - LEDs/lights update correctly in that mode, but the actual sequencer behavior is not correct yet.
 
+- The polymetric sequencer now works on Launchpad X (manual testing confirms playback and editing).
+
 ## What Has Been Implemented
 - Added a new `PolymetricSequencerComponent`.
 - Wired `polymetric stepseq` into `Settings.py`.
