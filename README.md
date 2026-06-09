@@ -6,9 +6,9 @@ It does not require any external tool like Max for Live (M4L) in order to work. 
 
 Full manual for the new polymetric sequencer mode: [PolymetricSequencerMode.md](/z:/Code/DSP/LaunchpadAlchemy95/PolymetricSequencerMode.md)
 
-Polymetric Sequencer Mode
+## Polymetric Sequencer Mode
 
-This fork adds a new `User 2` sub-mode: `polymetric stepseq`.
+#### This fork adds a new `User 2` sub-mode: `polymetric stepseq`.
 
 It is a clip-based melodic sequencer where five independent lanes can run at different cycle lengths:
 
