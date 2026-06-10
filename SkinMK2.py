@@ -608,19 +608,9 @@ class Colors:
         # Empty grid cells and inactive timeline steps.
         Blank = Rgb.BLACK
         StepOff = Rgb.BLACK
-
-        # Four-color step palette for lane/voice-specific step states.
-        StepOn1 = Rgb.GREEN
-        StepOn2 = Rgb.AMBER
-        StepOn3 = Rgb.LIGHT_BLUE
-        StepOn4 = Rgb.MINT
-
         # Matching playhead pulses for the step palette.
         Playhead1 = Rgb.GREEN_PULSE
-        Playhead2 = Rgb.AMBER_PULSE
-        Playhead3 = Rgb.LIGHT_BLUE_PULSE
-        Playhead4 = Rgb.MINT_PULSE
-
+    
         # Flashing edit target when a step needs explicit selection feedback.
         StepSelected = Rgb.WHITE_BLINK
 
@@ -635,26 +625,18 @@ class Colors:
         FaderOff = Rgb.BLACK
 
         # Lane cycle-length picker: active range, exact selected length, and inactive range.
-        LengthOn = Rgb.YELLOW_THIRD
-        LengthSelected = Rgb.YELLOW
+        LengthOn = Rgb.GREEN_THIRD
+        LengthSelected = Rgb.BLUE_PULSE
         LengthOff = Rgb.BLACK
 
         # Bottom-row page markers when the playhead is not on that column.
-        PageMarker = Rgb.DARK_GREY
+        PageMarker = Rgb.YELLOW
 
         # Side lane buttons; SideLength marks the lane currently in length-edit view.
         SideOn = Rgb.PURPLE
         SideOff = Rgb.PURPLE_THIRD
         SideLength = Rgb.WHITE
 
-        # Inherited top-button color slots for voice, pair, page, and random controls.
-        TopVoiceA = Rgb.GREEN
-        TopVoiceB = Rgb.AMBER
-        TopPairA = Rgb.LIGHT_BLUE
-        TopPairB = Rgb.MINT
-        TopPageA = Rgb.BLUE_THIRD
-        TopPageB = Rgb.BLUE
-        TopRandom = Rgb.RED
 
 
 def make_skin():
