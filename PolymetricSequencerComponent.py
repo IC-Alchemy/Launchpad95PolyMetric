@@ -1,10 +1,5 @@
-"""Clip-backed polymetric sequencer mode.
-
-This component deliberately reuses the melodic step sequencer's clip plumbing
-and only changes how note parameters are read, displayed, and written. The
-polymetric state is stored as normal MIDI notes plus a small clip-name token for
-lane lengths.
-"""
+"""Polymetric sequencer: each parameter lane (gate, pitch, octave, velocity, length)
+loops at its own cycle length, creating interlocking phrases from one clip."""
 
 import re
 import time
@@ -27,7 +22,7 @@ POLY_MODE_LENGTH = 1
 POLY_MODE_OCTAVE = 2
 POLY_MODE_VELOCITY = 3
 POLY_MODE_PITCH = 4
-POLY_MODE_LANE_LENGTH = 20
+POLY_MODE_LANE_LENGTH = 20  # utility page for choosing a lane's cycle length
 
 LANE_GATE = "gate"
 LANE_LENGTH = "length"
@@ -45,17 +40,16 @@ LANE_MODE = {
 }
 MODE_LANE = dict((value, key) for key, value in LANE_MODE.items())
 
-# Persist only the data Ableton notes cannot represent directly: per-lane cycle
-# lengths. The visible clip name is preserved outside this token.
+# Lane cycle lengths are persisted as a clip-name token: [poly:g1,p2,o3,v4,l5]
 METADATA_RE = re.compile(r"\s*\[poly:g(\d+),p(\d+),o(\d+),v(\d+),l(\d+)\]\s*")
 MAX_POLY_STEPS = 128
 
 
 class PolymetricNoteEditorComponent(MelodicNoteEditorComponent):
+	"""Edit one clip as independent looping parameter lanes."""
 
 	def __init__(self, step_sequencer, matrix, side_buttons, control_surface):
-		# MelodicNoteEditorComponent wires side button 3 as "random"; in this
-		# mode that same inherited hook is repurposed as the gate page button.
+		# Side button 3 ("random" in the melodic editor) is repurposed as gate page.
 		self._gate_button = None
 		self._last_side_press_times = {}
 		super(PolymetricNoteEditorComponent, self).__init__(step_sequencer, matrix, side_buttons, control_surface)
@@ -74,8 +68,7 @@ class PolymetricNoteEditorComponent(MelodicNoteEditorComponent):
 		self._set_default_lane_lengths()
 
 	def _set_default_lane_lengths(self):
-		# Defaults are intentionally short and predictable. Selecting a clip will
-		# replace these with clip-loop length or persisted metadata.
+		# Short equal defaults; replaced by clip-loop length or stored metadata when a clip opens.
 		self._lane_lengths = {
 			LANE_GATE: 8,
 			LANE_PITCH: 8,
@@ -85,14 +78,14 @@ class PolymetricNoteEditorComponent(MelodicNoteEditorComponent):
 		}
 
 	def set_clip(self, clip):
+		# Rebuild lane state from stored metadata when the clip changes.
 		if self._clip != clip:
 			self._init_data()
 			self._clip = clip
 			self._parse_metadata()
 
 	def set_mode(self, mode):
-		# Remember the lane whose length should be edited when entering length
-		# edit. This keeps "long press current page" behavior deterministic.
+		# Track which lane was active so long-press knows whose length to edit.
 		if mode != POLY_MODE_LANE_LENGTH:
 			self._selected_length_lane = MODE_LANE.get(mode, self._selected_length_lane)
 		self._mode = mode
@@ -100,23 +93,24 @@ class PolymetricNoteEditorComponent(MelodicNoteEditorComponent):
 		self.update()
 
 	def set_key_indexes(self, key_indexes):
+		# Reharmonize on scale change: normalise pitches, then rewrite clip.
 		if self._key_indexes != key_indexes:
 			self._key_indexes = key_indexes
 			self._normalize_pitch_indexes()
 			self._update_clip_notes()
 
 	def _normalize_pitch_indexes(self):
-		# A gate can be enabled before a pitch is chosen. Keep every step
-		# renderable/writable by assigning a stable fallback pitch degree.
+		# Gate may be on before a pitch is chosen; ensure every step has a valid pitch degree.
 		for step in xrange(MAX_POLY_STEPS):
 			has_pitch = False
 			for note_index in xrange(7):
 				if self._notes_pitches[step * 7 + note_index] == 1:
 					has_pitch = True
 			if not has_pitch:
-				self._notes_pitches[step * 7] = 1
+				self._notes_pitches[step * 7] = 0
 
 	def _default_length_from_clip(self):
+		# Default lane length = clip loop length in quantized steps.
 		if self._clip == None:
 			return 8
 		try:
@@ -126,9 +120,7 @@ class PolymetricNoteEditorComponent(MelodicNoteEditorComponent):
 		return max(1, min(MAX_POLY_STEPS, steps))
 
 	def _parse_metadata(self):
-		# If a clip has no metadata, all lanes initially cycle over the clip loop.
-		# This mirrors the existing melodic sequencer until the user opts into
-		# polymetric lengths.
+		# Restore lane lengths from clip-name token; fall back to clip-loop length.
 		default_length = self._default_length_from_clip()
 		for lane in LANE_ORDER:
 			self._lane_lengths[lane] = default_length
@@ -150,11 +142,11 @@ class PolymetricNoteEditorComponent(MelodicNoteEditorComponent):
 			self._lane_lengths[lane] = max(1, min(MAX_POLY_STEPS, value))
 
 	def _write_metadata(self):
+		# Write lane lengths into clip-name token so they survive reload.
 		if self._clip == None:
 			return
 		try:
-			# Strip any old token before appending the current one; otherwise
-			# repeated edits would steadily corrupt the user-visible clip name.
+			# Strip old token first so repeated edits don't pile up.
 			name = self._clip.name or ""
 			base_name = METADATA_RE.sub("", name).strip()
 			token = "[poly:g%d,p%d,o%d,v%d,l%d]" % (
@@ -169,9 +161,8 @@ class PolymetricNoteEditorComponent(MelodicNoteEditorComponent):
 			pass
 
 	def _parse_notes(self):
-		# Existing clips use the first note at a step as the source for shared
-		# velocity, octave, and length. In poly mode, additional notes at that
-		# same step are kept as chord tones.
+		# First note at a step defines gate, velocity, octave, length.
+		# Additional notes become chord tones when polyphonic.
 		for index in xrange(len(self._notes_pitches)):
 			self._notes_pitches[index] = 0
 		for index in xrange(MAX_POLY_STEPS):
@@ -220,11 +211,10 @@ class PolymetricNoteEditorComponent(MelodicNoteEditorComponent):
 					self._notes_octaves[step] = octave
 					self._notes_pitches[step * 7 + note_index] = 1
 		if not found:
-			self._notes_pitches[step * 7] = 1
+			self._notes_pitches[step * 7] = 0
 
 	def _lane_value_step(self, step, lane):
-		# Core polymetric rule: each lane reads from its own modulo cycle while
-		# the clip timeline still advances on the normal quantized grid.
+		# Core polymetric rule: each lane advances modulo its own cycle length.
 		return step % self._lane_lengths[lane]
 
 	def _pitch_indexes_for_step(self, step):
@@ -247,6 +237,7 @@ class PolymetricNoteEditorComponent(MelodicNoteEditorComponent):
 						kept_pitch = True
 
 	def _update_clip_notes(self):
+		# Resolve each lane independently through its modulo cycle, emit as plain MIDI notes.
 		if self._clip != None and self._step_sequencer.is_enabled():
 			note_cache = []
 			try:
@@ -263,9 +254,6 @@ class PolymetricNoteEditorComponent(MelodicNoteEditorComponent):
 				if self._notes_gates[gate_step] != 1:
 					continue
 
-				# Resolve every emitted MIDI note from the lane's independent
-				# play position, then write the final result back as ordinary
-				# Ableton MIDI notes.
 				octave_step = self._lane_value_step(step, LANE_OCTAVE)
 				velocity_step = self._lane_value_step(step, LANE_VELOCITY)
 				length_step = self._lane_value_step(step, LANE_LENGTH)
@@ -292,8 +280,7 @@ class PolymetricNoteEditorComponent(MelodicNoteEditorComponent):
 	def _playhead_step_for_lane(self, lane):
 		if self._playhead == None:
 			return None
-		# The visual playhead follows the active lane's cycle, not only the clip
-		# page. This is the main realtime feedback for polymeter.
+		# Playhead follows the active lane's own cycle, not the clip page.
 		return int(self._playhead / self.quantization) % self._lane_lengths[lane]
 
 	def _update_matrix(self):
@@ -327,9 +314,7 @@ class PolymetricNoteEditorComponent(MelodicNoteEditorComponent):
 			step = x + 8 * self._page
 			gate_on = self._notes_gates[self._lane_value_step(step, LANE_GATE)] == 1
 			has_note = gate_on
-			# Render the page by projecting timeline columns through lane modulo
-			# addressing. Repeated values are intentional when a lane is shorter
-			# than the visible clip page.
+			# Columns repeat when a lane is shorter than the visible page — that's the polymetric visual.
 			for y in xrange(7):
 				if self._mode == POLY_MODE_PITCH:
 					value_step = self._lane_value_step(step, LANE_PITCH)
@@ -366,10 +351,9 @@ class PolymetricNoteEditorComponent(MelodicNoteEditorComponent):
 		return "PolymetricSequencer.FaderOff"
 
 	def _render_lane_length(self):
+		# Full 8x8 grid as a length picker (0–63 per page), so long cycles fit on one screen.
 		selected_length = self._active_lane_length()
 		base_step = self._page * 64
-		# Length edit uses the full 8x8 grid so users can set long cycles without
-		# stepping through sixteen separate clip pages.
 		for y in xrange(8):
 			for x in xrange(8):
 				step = base_step + y * 8 + x
@@ -393,8 +377,7 @@ class PolymetricNoteEditorComponent(MelodicNoteEditorComponent):
 			if self._clip == None:
 				self._step_sequencer.create_clip()
 			elif ((value != 0) or (not is_momentary)):
-				# Normal parameter pages use columns as clip steps; length edit
-				# uses the whole matrix as a length picker.
+				# Parameter pages use columns as steps; length edit uses the full grid.
 				step = self._length_step_from_grid(x, y) if self._mode == POLY_MODE_LANE_LENGTH else self._parameter_step_from_grid(x)
 				if step < 0 or step >= MAX_POLY_STEPS:
 					return
@@ -417,8 +400,7 @@ class PolymetricNoteEditorComponent(MelodicNoteEditorComponent):
 					self._notes_pitches[value_step * 7 + yy] = 0
 				if not selected:
 					self._notes_pitches[pitch_index] = 1
-					# Choosing a pitch should create an audible event, matching
-					# the melodic sequencer's "tap a note to make a step" feel.
+					# Auto-gate: choosing a pitch creates a step so it's immediately audible.
 					self._notes_gates[self._lane_value_step(step, LANE_GATE)] = 1
 			else:
 				self._notes_pitches[pitch_index] = 0 if self._notes_pitches[pitch_index] == 1 else 1
@@ -435,11 +417,11 @@ class PolymetricNoteEditorComponent(MelodicNoteEditorComponent):
 			self._notes_gates[value_step] = 0 if self._notes_gates[value_step] == 1 else 1
 
 	def _button_released_as_length_edit(self, sender, lane):
+		# Hold > 0.4s on a lane button = edit that lane's cycle length.
 		press_time = self._last_side_press_times.pop(sender, None)
 		if press_time == None:
 			return False
-		if time.time() - press_time > 0.5:
-			# Long-pressing any lane button edits that lane's cycle length.
+		if time.time() - press_time > 0.4:
 			self._selected_length_lane = lane
 			self.set_mode(POLY_MODE_LANE_LENGTH)
 			self._control_surface.show_message("%s length" % lane)
@@ -451,8 +433,7 @@ class PolymetricNoteEditorComponent(MelodicNoteEditorComponent):
 		self._update_gate_button()
 
 	def set_random_button(self, button):
-		# Parent constructor calls this while setting up the melodic editor.
-		# Keep the inherited call path valid, but bind it to gate instead.
+		# Parent constructor calls this; rebind to gate instead of random.
 		self.set_gate_button(button)
 
 	def set_gate_button(self, button):
@@ -555,14 +536,14 @@ class PolymetricNoteEditorComponent(MelodicNoteEditorComponent):
 
 
 class PolymetricSequencerComponent(StepSequencerComponent2):
+	"""Wrapper that swaps in the polymetric note editor; clip follow, scale, quantization, and nav stay standard."""
 
 	def __init__(self, matrix, side_buttons, top_buttons, control_surface):
 		super(PolymetricSequencerComponent, self).__init__(matrix, side_buttons, top_buttons, control_surface)
 		self._name = "polymetric step sequencer"
 
 	def _set_note_editor(self):
-		# Everything outside the editor remains StepSequencer2 behavior: clip
-		# following, lock modes, quantization, scale, loop navigation, and OSD.
+		# Everything outside the editor remains StepSequencer2: clip follow, lock, quantization, scale, loop nav, OSD.
 		self._note_editor = self.register_component(PolymetricNoteEditorComponent(self, self._matrix, self._side_buttons, self._control_surface))
 
 	def _update_OSD(self):
