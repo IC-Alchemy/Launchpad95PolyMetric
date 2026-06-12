@@ -104,6 +104,8 @@ The first held pad is shown as the **pending loop start**. When the second pad i
 ### Single-Pad Tap
 A single pad tap does not create a loop. Releasing a tapped pad inside the current loop jumps playback to that segment and plays from there.
 
+If the clip is already playing, the jump happens immediately within the running loop. If the clip is stopped, the clip is launched first and the launch waits for the currently selected launch quantization before the playback jump is applied.
+
 Taps outside the current loop do not change the loop range.
 
 ### Visual States
@@ -159,9 +161,9 @@ A side button toggles the view between 4-track and 8-track configurations.
 | Side Button | 4-Track / 8-Track Mode | Function |
 |-------------|------------------------|----------|
 | 1 (Vol)     | Both                   | Toggle 4-track / 8-track |
-| 2 (Pan)     | Both                   | Track bank left / quantization cycle |
+| 2 (Pan)     | Both                   | Track bank left |
 | 3 (SndA)    | Both                   | Track bank right |
-| 4 (SndB)    | Both                   | Reserved / shift modifier |
+| 4 (SndB)    | Both                   | Cycle launch quantization (`2 Bars` → `1 Bar` → `1/4` → `1/8` → `1/16`) |
 | 5 (Stop)    | Both                   | Stop all clips on visible tracks |
 | 6 (Trk On)  | Both                   | Mute/unmute current track |
 | 7 (Solo)    | Both                   | Solo current track |
@@ -224,7 +226,7 @@ _render_grid()
 ║ Scale: ---               ║   attr 0
 ║ Root : ---               ║   attr 1
 ║ Tracks: 4-track (1-4)    ║   attr 2  (or "8-track (1-8)")
-║ Quant : 1/16             ║   attr 3
+║ Quant : 1/16 | 1/4       ║   attr 3  (slice grid | launch quantization)
 ║                          ║   attr 4-7 unused
 ║ track : Track Name       ║   info 0
 ║ clip  : Clip Name        ║   info 1

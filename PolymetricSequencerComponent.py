@@ -42,7 +42,7 @@ MODE_LANE = dict((value, key) for key, value in LANE_MODE.items())
 
 # Lane cycle lengths are persisted as a clip-name token: [poly:g1,p2,o3,v4,l5]
 METADATA_RE = re.compile(r"\s*\[poly:g(\d+),p(\d+),o(\d+),v(\d+),l(\d+)\]\s*")
-MAX_POLY_STEPS = 128
+MAX_POLY_STEPS = 32
 
 
 class PolymetricNoteEditorComponent(MelodicNoteEditorComponent):

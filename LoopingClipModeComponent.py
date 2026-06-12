@@ -13,6 +13,21 @@ except NameError:
     xrange = range
 
 _Q = Live.Song.Quantization
+LAUNCH_QNTZ_VALUES = (
+    _Q.q_2_bars,
+    _Q.q_bar,
+    _Q.q_quarter,
+    _Q.q_eight,
+    _Q.q_sixtenth
+)
+LAUNCH_QNTZ_NAMES = (
+    "2 Bars",
+    "1 Bar",
+    "1/4",
+    "1/8",
+    "1/16"
+)
+DEFAULT_LAUNCH_QNTZ_INDEX = 2
 
 
 class TrackLoopState:
@@ -32,6 +47,7 @@ class TrackLoopState:
         self.pressed_steps = []
         self.loop_gesture_active = False
         self.clip_listeners_attached = False
+        self.pending_launch_beat = None
 
 
 class LoopingClipModeComponent(CompoundComponent):
@@ -54,6 +70,7 @@ class LoopingClipModeComponent(CompoundComponent):
         self._track_offset = 0
         self._selected_scene_index = 0
         self._quantization_step_size = 16
+        self._launch_quantization_index = DEFAULT_LAUNCH_QNTZ_INDEX
 
         # We keep eight state objects around even in 4-track mode. In that mode,
         # each track simply gets more vertical space on the 8x8 grid.
@@ -204,6 +221,7 @@ class LoopingClipModeComponent(CompoundComponent):
         state.pressed_steps = []
         state.loop_gesture_active = False
         state.clip_listeners_attached = False
+        state.pending_launch_beat = None
 
     def _refresh_track_states(self):
         # Syncs all visible track lanes with Live's current Set state: grabs
@@ -404,6 +422,7 @@ class LoopingClipModeComponent(CompoundComponent):
         if self.is_enabled():
             for state in self._track_states:
                 self._read_clip_loop(state)
+                self._apply_pending_launch(state)
             self._force_update = True
             self.update()
 
@@ -419,6 +438,13 @@ class LoopingClipModeComponent(CompoundComponent):
             state.pending_start_step = None
             state.pressed_steps = []
             state.loop_gesture_active = False
+            state.pending_launch_beat = None
+
+    def _launch_quantization(self):
+        return LAUNCH_QNTZ_VALUES[self._launch_quantization_index]
+
+    def _launch_quantization_name(self):
+        return LAUNCH_QNTZ_NAMES[self._launch_quantization_index]
 
     def _select_track_for_state(self, state):
         # Highlights the track in Live's Session View that corresponds to the
@@ -518,11 +544,25 @@ class LoopingClipModeComponent(CompoundComponent):
                 if abs(delta) > 0.0001:
                     state.clip.move_playing_pos(delta)
             else:
-                state.clip_slot.fire(force_legato=True, launch_quantization=_Q.q_no_q)
-                delta = target_beat - state.loop_start
-                if abs(delta) > 0.0001:
-                    state.clip.move_playing_pos(delta)
+                state.pending_launch_beat = target_beat
+                state.clip_slot.fire(force_legato=False, launch_quantization=self._launch_quantization())
             self._read_clip_loop(state)
+        except (AttributeError, RuntimeError, TypeError):
+            state.pending_launch_beat = None
+            pass
+
+    def _apply_pending_launch(self, state):
+        if state.pending_launch_beat is None or state.clip is None:
+            return
+        if not state.clip.is_playing or not self.song().is_playing:
+            return
+        try:
+            current_beat = state.playhead if state.playhead is not None else state.loop_start
+            delta = state.pending_launch_beat - current_beat
+            if abs(delta) > 0.0001:
+                state.clip.move_playing_pos(delta)
+                self._read_clip_loop(state)
+            state.pending_launch_beat = None
         except (AttributeError, RuntimeError, TypeError):
             pass
 
@@ -736,9 +776,13 @@ class LoopingClipModeComponent(CompoundComponent):
             self._nudge_track_offset(self._visible_bank_size())
 
     def _reserved_button_value(self, value, sender):
-        # Side button 4: currently unused — forces a grid repaint.
+        # Side button 4: cycles the launch quantization used when a pad tap
+        # starts a stopped clip from a selected slice.
         if self.is_enabled() and self._button_is_pressed(value, sender):
+            self._launch_quantization_index = (self._launch_quantization_index + 1) % len(LAUNCH_QNTZ_VALUES)
             self._force_update = True
+            self._control_surface.show_message("Launch Quant %s" % self._launch_quantization_name())
+            self._update_OSD()
             self.update()
 
     def _stop_button_value(self, value, sender):
@@ -931,7 +975,8 @@ class LoopingClipModeComponent(CompoundComponent):
                     button.turn_off()
 
         if self._side_buttons[3] is not None:
-            self._side_buttons[3].set_light("DefaultButton.Disabled")
+            self._side_buttons[3].set_on_off_values("Mode.LoopingClipMode.On", "Mode.LoopingClipMode.Off")
+            self._side_buttons[3].turn_on()
 
     def _update_scene_buttons(self):
         # Lights the scene-up and scene-down top-row buttons when there are
@@ -1001,7 +1046,7 @@ class LoopingClipModeComponent(CompoundComponent):
         visible_count = self._track_count_for_mode()
         last_track = min(len(list(self.song().tracks)), self._track_offset + visible_count)
         mode_label = "%d-track (%d-%d)" % (visible_count, self._track_offset + 1, max(self._track_offset + 1, last_track))
-        quant_label = "1/%d" % self._quantization_step_size
+        quant_label = "1/%d | %s" % (self._quantization_step_size, self._launch_quantization_name())
 
         focused_state = self._focused_state()
         track_name = "---"

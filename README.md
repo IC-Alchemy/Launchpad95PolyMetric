@@ -52,9 +52,10 @@ Quick overview:
 - Enter it by pressing `User 1` three times (cycle through instrument → device → **looping clip**).
 - Default view shows 4 tracks from the current scene, each taking 2 rows of the grid for 16 slices.
 - Side button 1 toggles between **4-track** (16 slices per track) and **8-track** (8 slices per track) layouts.
+- Side button 4 cycles stopped-clip launch quantization: `2 Bars` → `1 Bar` → `1/4` → `1/8` → `1/16`.
 - Hold any two pads on the same track at the same time to set the loop between them.
 - Holding the first and last pad together restores the full clip span for that track.
-- Tap and release a single pad inside the current loop to jump playback to that slice and play.
+- Tap and release a single pad inside the current loop to jump playback to that slice and play. If the clip is stopped, that launch waits for the selected quantization.
 - Slice size is derived from the clip's marker range when the mode is entered.
 - The component currently edits `loop_start` and `loop_end` only; it does not rewrite MIDI notes.
 
@@ -93,7 +94,7 @@ Row 7 → Track 7
 | Button | Function |
 |--------|----------|
 | 1 | Toggle 4-track / 8-track mode |
-| 3 | Quantization placeholder (currently no action) |
+| 4 | Cycle launch quantization |
 
 ### Scene And Track Following
 
