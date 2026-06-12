@@ -31,6 +31,7 @@ class TrackLoopState:
         self.pending_start_step = None
         self.pressed_steps = []
         self.loop_gesture_active = False
+        self.clip_listeners_attached = False
 
 
 class LoopingClipModeComponent(CompoundComponent):
@@ -142,7 +143,7 @@ class LoopingClipModeComponent(CompoundComponent):
     def _rows_per_track(self):
         # How many horizontal pad rows on the Launchpad grid are dedicated to
         # a single track's clip window.
-        return 2 if self._is_4_track_mode else 8
+        return 2 if self._is_4_track_mode else 1
 
     def _current_scene_index(self):
         # Scene rows in Session View correspond to horizontal "clips per track"
@@ -202,6 +203,7 @@ class LoopingClipModeComponent(CompoundComponent):
         state.pending_start_step = None
         state.pressed_steps = []
         state.loop_gesture_active = False
+        state.clip_listeners_attached = False
 
     def _refresh_track_states(self):
         # Syncs all visible track lanes with Live's current Set state: grabs
@@ -322,34 +324,68 @@ class LoopingClipModeComponent(CompoundComponent):
         # Subscribes to Live notifications for this clip: loop brace movement,
         # playhead position, and play/stop state changes. This keeps the pad
         # grid visually in sync with what Live is doing without polling.
-        if state.clip is not None:
+        if state.clip is not None and not state.clip_listeners_attached:
             try:
+                try:
+                    state.clip.remove_loop_start_listener(self._on_loop_changed)
+                except Exception:
+                    pass
+                try:
+                    state.clip.remove_loop_end_listener(self._on_loop_changed)
+                except Exception:
+                    pass
+                try:
+                    state.clip.remove_playing_position_listener(self._on_playing_position_changed)
+                except Exception:
+                    pass
+                try:
+                    state.clip.remove_playing_status_listener(self._on_playing_status_changed)
+                except Exception:
+                    pass
                 # These listeners let the pad view follow Live in real time:
                 # loop brace changes, playback movement, and play/stop state.
-                if not state.clip.loop_start_has_listener(self._on_loop_changed):
-                    state.clip.add_loop_start_listener(self._on_loop_changed)
-                if not state.clip.loop_end_has_listener(self._on_loop_changed):
-                    state.clip.add_loop_end_listener(self._on_loop_changed)
-                if not state.clip.playing_position_has_listener(self._on_playing_position_changed):
-                    state.clip.add_playing_position_listener(self._on_playing_position_changed)
-                if not state.clip.playing_status_has_listener(self._on_playing_status_changed):
-                    state.clip.add_playing_status_listener(self._on_playing_status_changed)
-            except RuntimeError:
-                pass
+                state.clip.add_loop_start_listener(self._on_loop_changed)
+                state.clip.add_loop_end_listener(self._on_loop_changed)
+                state.clip.add_playing_position_listener(self._on_playing_position_changed)
+                state.clip.add_playing_status_listener(self._on_playing_status_changed)
+                state.clip_listeners_attached = True
+            except Exception:
+                state.clip_listeners_attached = False
 
     def _remove_clip_listeners(self, state):
-        if state.clip is not None:
+        if state.clip is not None and state.clip_listeners_attached:
             try:
-                if state.clip.loop_start_has_listener(self._on_loop_changed):
-                    state.clip.remove_loop_start_listener(self._on_loop_changed)
-                if state.clip.loop_end_has_listener(self._on_loop_changed):
-                    state.clip.remove_loop_end_listener(self._on_loop_changed)
-                if state.clip.playing_position_has_listener(self._on_playing_position_changed):
-                    state.clip.remove_playing_position_listener(self._on_playing_position_changed)
-                if state.clip.playing_status_has_listener(self._on_playing_status_changed):
-                    state.clip.remove_playing_status_listener(self._on_playing_status_changed)
-            except RuntimeError:
+                state.clip.remove_loop_start_listener(self._on_loop_changed)
+            except Exception:
                 pass
+            try:
+                state.clip.remove_loop_end_listener(self._on_loop_changed)
+            except Exception:
+                pass
+            try:
+                state.clip.remove_playing_position_listener(self._on_playing_position_changed)
+            except Exception:
+                pass
+            try:
+                state.clip.remove_playing_status_listener(self._on_playing_status_changed)
+            except Exception:
+                pass
+        state.clip_listeners_attached = False
+
+    def _recover_from_error(self):
+        # Safety net for Live API edge cases: clear transient gesture state and
+        # rebuild clip references so the mode stays usable after a bad event.
+        self._clear_pending_steps()
+        for state in self._track_states:
+            state.clip_listeners_attached = False
+        self._force_update = True
+        try:
+            self._refresh_track_states()
+            self._update_buttons()
+            self._render_grid()
+            self._update_OSD()
+        except Exception:
+            pass
 
     def _on_loop_changed(self):
         # Fires when the user or another control surface moves the loop brace
@@ -533,24 +569,27 @@ class LoopingClipModeComponent(CompoundComponent):
         if not self.is_enabled() or self._matrix is None:
             return
 
-        track_index, step = self._grid_to_step(x, y)
-        if track_index is None:
-            return
+        try:
+            track_index, step = self._grid_to_step(x, y)
+            if track_index is None:
+                return
 
-        state = self._track_states[track_index]
-        if state.track is None:
-            return
+            state = self._track_states[track_index]
+            if state.track is None:
+                return
 
-        if state.clip is None:
-            return
+            if state.clip is None:
+                return
 
-        self._select_track_for_state(state)
-        if value != 0 or not is_momentary:
-            self._handle_pad_press(state, step)
-        else:
-            self._handle_pad_release(state, step)
-        self._force_update = True
-        self.update()
+            self._select_track_for_state(state)
+            if value != 0 or not is_momentary:
+                self._handle_pad_press(state, step)
+            else:
+                self._handle_pad_release(state, step)
+            self._force_update = True
+            self.update()
+        except Exception:
+            self._recover_from_error()
 
     def _toggle_track_mode(self):
         # Flips between 4-track and 8-track view. 4-track mode gives finer
@@ -842,10 +881,13 @@ class LoopingClipModeComponent(CompoundComponent):
         # screen display with the latest track/clip names.
         if not self.is_enabled():
             return
-        self._refresh_track_states()
-        self._update_buttons()
-        self._render_grid()
-        self._update_OSD()
+        try:
+            self._refresh_track_states()
+            self._update_buttons()
+            self._render_grid()
+            self._update_OSD()
+        except Exception:
+            self._recover_from_error()
 
     def _update_buttons(self):
         # Refreshes all side and top button LEDs in one pass: track-count
