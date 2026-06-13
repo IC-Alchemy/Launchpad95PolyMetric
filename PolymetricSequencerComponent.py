@@ -22,6 +22,7 @@ POLY_MODE_LENGTH = 1
 POLY_MODE_OCTAVE = 2
 POLY_MODE_VELOCITY = 3
 POLY_MODE_PITCH = 4
+POLY_MODE_CC11 = 5
 POLY_MODE_LANE_LENGTH = 20  # utility page for choosing a lane's cycle length
 
 LANE_GATE = "gate"
@@ -29,19 +30,21 @@ LANE_LENGTH = "length"
 LANE_OCTAVE = "octave"
 LANE_VELOCITY = "velocity"
 LANE_PITCH = "pitch"
+LANE_CC11 = "cc11"
 
-LANE_ORDER = [LANE_GATE, LANE_LENGTH, LANE_OCTAVE, LANE_VELOCITY, LANE_PITCH]
+LANE_ORDER = [LANE_GATE, LANE_LENGTH, LANE_OCTAVE, LANE_VELOCITY, LANE_PITCH, LANE_CC11]
 LANE_MODE = {
 	LANE_GATE: POLY_MODE_GATE,
 	LANE_LENGTH: POLY_MODE_LENGTH,
 	LANE_OCTAVE: POLY_MODE_OCTAVE,
 	LANE_VELOCITY: POLY_MODE_VELOCITY,
-	LANE_PITCH: POLY_MODE_PITCH
+	LANE_PITCH: POLY_MODE_PITCH,
+	LANE_CC11: POLY_MODE_CC11
 }
 MODE_LANE = dict((value, key) for key, value in LANE_MODE.items())
 
-# Lane cycle lengths are persisted as a clip-name token: [poly:g1,p2,o3,v4,l5]
-METADATA_RE = re.compile(r"\s*\[poly:g(\d+),p(\d+),o(\d+),v(\d+),l(\d+)\]\s*")
+# Lane cycle lengths are persisted as a clip-name token: [poly:g1,p2,o3,v4,l5,c6]
+METADATA_RE = re.compile(r"\s*\[poly:g(\d+),p(\d+),o(\d+),v(\d+),l(\d+),c(\d+)\]\s*")
 MAX_POLY_STEPS = 32
 
 
@@ -65,6 +68,7 @@ class PolymetricNoteEditorComponent(MelodicNoteEditorComponent):
 	def _init_data(self):
 		super(PolymetricNoteEditorComponent, self)._init_data()
 		self._notes_gates = [0] * MAX_POLY_STEPS
+		self._notes_cc11 = [4] * MAX_POLY_STEPS
 		self._set_default_lane_lengths()
 
 	def _set_default_lane_lengths(self):
@@ -74,7 +78,8 @@ class PolymetricNoteEditorComponent(MelodicNoteEditorComponent):
 			LANE_PITCH: 8,
 			LANE_OCTAVE: 8,
 			LANE_VELOCITY: 8,
-			LANE_LENGTH: 8
+			LANE_LENGTH: 8,
+			LANE_CC11: 8
 		}
 
 	def set_clip(self, clip):
@@ -136,7 +141,8 @@ class PolymetricNoteEditorComponent(MelodicNoteEditorComponent):
 			LANE_PITCH: int(match.group(2)),
 			LANE_OCTAVE: int(match.group(3)),
 			LANE_VELOCITY: int(match.group(4)),
-			LANE_LENGTH: int(match.group(5))
+			LANE_LENGTH: int(match.group(5)),
+			LANE_CC11: int(match.group(6))
 		}
 		for lane, value in values.items():
 			self._lane_lengths[lane] = max(1, min(MAX_POLY_STEPS, value))
@@ -149,12 +155,13 @@ class PolymetricNoteEditorComponent(MelodicNoteEditorComponent):
 			# Strip old token first so repeated edits don't pile up.
 			name = self._clip.name or ""
 			base_name = METADATA_RE.sub("", name).strip()
-			token = "[poly:g%d,p%d,o%d,v%d,l%d]" % (
+			token = "[poly:g%d,p%d,o%d,v%d,l%d,c%d]" % (
 				self._lane_lengths[LANE_GATE],
 				self._lane_lengths[LANE_PITCH],
 				self._lane_lengths[LANE_OCTAVE],
 				self._lane_lengths[LANE_VELOCITY],
-				self._lane_lengths[LANE_LENGTH]
+				self._lane_lengths[LANE_LENGTH],
+				self._lane_lengths[LANE_CC11]
 			)
 			self._clip.name = ("%s %s" % (base_name, token)).strip()
 		except RuntimeError:
@@ -170,6 +177,7 @@ class PolymetricNoteEditorComponent(MelodicNoteEditorComponent):
 			self._notes_velocities[index] = 4
 			self._notes_octaves[index] = 2
 			self._notes_lengths[index] = 3
+			self._notes_cc11[index] = 4
 
 		first_note = [True] * MAX_POLY_STEPS
 		for note in self._note_cache:
@@ -256,11 +264,12 @@ class PolymetricNoteEditorComponent(MelodicNoteEditorComponent):
 
 				octave_step = self._lane_value_step(step, LANE_OCTAVE)
 				velocity_step = self._lane_value_step(step, LANE_VELOCITY)
+				cc11_step = self._lane_value_step(step, LANE_CC11)
 				length_step = self._lane_value_step(step, LANE_LENGTH)
 				pitch_indexes = self._pitch_indexes_for_step(step)
 
 				time_value = step * self._quantization
-				velocity = self._velocity_map[self._notes_velocities[velocity_step]]
+				velocity = int(self._velocity_map[self._notes_velocities[velocity_step]] * self._velocity_map[self._notes_cc11[cc11_step]] / 127.0)
 				length = self._length_map[self._notes_lengths[length_step]] * self._quantization / 4.0
 				for pitch_index in pitch_indexes:
 					pitch = self._key_indexes[pitch_index] + 12 * (self._notes_octaves[octave_step] - 2)
@@ -325,6 +334,9 @@ class PolymetricNoteEditorComponent(MelodicNoteEditorComponent):
 				elif self._mode == POLY_MODE_VELOCITY:
 					value_step = self._lane_value_step(step, LANE_VELOCITY)
 					color = self._value_color(self._notes_velocities[value_step] >= 6 - y, has_note)
+				elif self._mode == POLY_MODE_CC11:
+					value_step = self._lane_value_step(step, LANE_CC11)
+					color = self._value_color(self._notes_cc11[value_step] >= 6 - y, has_note)
 				elif self._mode == POLY_MODE_LENGTH:
 					value_step = self._lane_value_step(step, LANE_LENGTH)
 					color = self._value_color(self._notes_lengths[value_step] >= 6 - y, has_note)
@@ -410,6 +422,8 @@ class PolymetricNoteEditorComponent(MelodicNoteEditorComponent):
 			self._notes_octaves[self._lane_value_step(step, LANE_OCTAVE)] = 6 - y
 		elif self._mode == POLY_MODE_VELOCITY:
 			self._notes_velocities[self._lane_value_step(step, LANE_VELOCITY)] = 6 - y
+		elif self._mode == POLY_MODE_CC11:
+			self._notes_cc11[self._lane_value_step(step, LANE_CC11)] = 6 - y
 		elif self._mode == POLY_MODE_LENGTH:
 			self._notes_lengths[self._lane_value_step(step, LANE_LENGTH)] = 6 - y
 		elif self._mode == POLY_MODE_GATE:
@@ -477,7 +491,20 @@ class PolymetricNoteEditorComponent(MelodicNoteEditorComponent):
 		self._update_lane_button(self._mode_notes_octaves_button, POLY_MODE_OCTAVE, LANE_OCTAVE, "StepSequencer2.Octave.On", "StepSequencer2.Octave.Dim")
 
 	def _update_mode_notes_velocities_button(self):
-		self._update_lane_button(self._mode_notes_velocities_button, POLY_MODE_VELOCITY, LANE_VELOCITY, "StepSequencer2.Velocity.On", "StepSequencer2.Velocity.Dim")
+		if self.is_enabled() and self._mode_notes_velocities_button != None:
+			if self._clip != None:
+				if self._mode == POLY_MODE_LANE_LENGTH and self._selected_length_lane == LANE_VELOCITY:
+					self._mode_notes_velocities_button.set_light("PolymetricSequencer.SideLength")
+				elif self._mode == POLY_MODE_LANE_LENGTH and self._selected_length_lane == LANE_CC11:
+					self._mode_notes_velocities_button.set_light("PolymetricSequencer.SideLength")
+				else:
+					self._mode_notes_velocities_button.set_on_off_values("StepSequencer2.Velocity.On", "StepSequencer2.Velocity.Dim")
+					if self._mode in (POLY_MODE_VELOCITY, POLY_MODE_CC11):
+						self._mode_notes_velocities_button.turn_on()
+					else:
+						self._mode_notes_velocities_button.turn_off()
+			else:
+				self._mode_notes_velocities_button.set_light("DefaultButton.Disabled")
 
 	def _update_mode_notes_lengths_button(self):
 		self._update_lane_button(self._mode_notes_lengths_button, POLY_MODE_LENGTH, LANE_LENGTH, "StepSequencer2.Length.On", "StepSequencer2.Length.Dim")
@@ -519,7 +546,24 @@ class PolymetricNoteEditorComponent(MelodicNoteEditorComponent):
 		self._lane_button_value(value, sender, LANE_OCTAVE, POLY_MODE_OCTAVE, "octave")
 
 	def _mode_button_notes_velocities_value(self, value, sender):
-		self._lane_button_value(value, sender, LANE_VELOCITY, POLY_MODE_VELOCITY, "velocity")
+		if self.is_enabled() and self._clip != None:
+			if value != 0 or not sender.is_momentary():
+				self._last_side_press_times[sender] = time.time()
+			else:
+				if self._button_released_as_length_edit(sender, LANE_VELOCITY):
+					return
+				if time.time() - self._last_notes_velocity_button_press < 0.5:
+					if self._mode == POLY_MODE_VELOCITY:
+						self.set_mode(POLY_MODE_CC11)
+						self._control_surface.show_message("cc11")
+					else:
+						self.set_mode(POLY_MODE_VELOCITY)
+						self._control_surface.show_message("velocity")
+				else:
+					self.set_mode(POLY_MODE_VELOCITY)
+					self._control_surface.show_message("velocity")
+				self._last_notes_velocity_button_press = time.time()
+				self._step_sequencer._update_OSD()
 
 	def _mode_button_notes_lengths_value(self, value, sender):
 		self._lane_button_value(value, sender, LANE_LENGTH, POLY_MODE_LENGTH, "length")
@@ -565,14 +609,15 @@ class PolymetricSequencerComponent(StepSequencerComponent2):
 				else:
 					self._osd.attributes[4] = active_lane
 					self._osd.attribute_names[4] = "Parameter"
-				self._osd.attributes[5] = "%d/%d/%d/%d/%d" % (
+				self._osd.attributes[5] = "%d/%d/%d/%d/%d/%d" % (
 					self._note_editor._lane_lengths[LANE_GATE],
 					self._note_editor._lane_lengths[LANE_PITCH],
 					self._note_editor._lane_lengths[LANE_OCTAVE],
 					self._note_editor._lane_lengths[LANE_VELOCITY],
+					self._note_editor._lane_lengths[LANE_CC11],
 					self._note_editor._lane_lengths[LANE_LENGTH]
 				)
-				self._osd.attribute_names[5] = "G/P/O/V/L"
+				self._osd.attribute_names[5] = "G/P/O/V/C/L"
 				self._osd.attributes[6] = "Mono" if self._note_editor._is_monophonic else "Poly"
 				self._osd.attribute_names[6] = "Polyphony"
 				self._osd.attributes[7] = " "
